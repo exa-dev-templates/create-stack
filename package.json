@@ -8,7 +8,7 @@
     "create-template-app": "./cli/bin/create-app.js"
   },
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "scripts": {
     "create": "node ./cli/bin/create-app.js",
