@@ -1,0 +1,30 @@
+[submodule "template-react"]
+	path = template-react
+	url = git@github.com:exa-dev-templates/template-react.git
+[submodule "template-express"]
+	path = template-express
+	url = git@github.com:exa-dev-templates/template-express.git
+[submodule "template-fastapi-async"]
+	path = template-fastapi-async
+	url = git@github.com:exa-dev-templates/template-fastapi-async.git
+[submodule "template-golang"]
+	path = template-golang
+	url = git@github.com:exa-dev-templates/template-golang.git
+[submodule "template-java"]
+	path = template-java
+	url = git@github.com:exa-dev-templates/template-java.git
+[submodule "template-vue"]
+	path = template-vue
+	url = git@github.com:exa-dev-templates/template-vue.git
+[submodule "template-worker-golang"]
+	path = template-worker-golang
+	url = git@github.com:exa-dev-templates/template-worker-golang.git
+[submodule "template-worker-java"]
+	path = template-worker-java
+	url = git@github.com:exa-dev-templates/template-worker-java.git
+[submodule "template-worker-python"]
+	path = template-worker-python
+	url = git@github.com:exa-dev-templates/template-worker-python.git
+[submodule "template-worker-typescript"]
+	path = template-worker-typescript
+	url = git@github.com:exa-dev-templates/template-worker-typescript.git

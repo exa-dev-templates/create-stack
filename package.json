@@ -1,0 +1,44 @@
+{
+  "name": "@exa31/create-stack",
+  "version": "1.0.0",
+  "description": "Interactive CLI project scaffolding tool for selecting Backend, Frontend, and Worker templates",
+  "main": "cli/src/index.js",
+  "bin": {
+    "create-stack": "./cli/bin/create-app.js",
+    "create-template-app": "./cli/bin/create-app.js"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "scripts": {
+    "create": "node ./cli/bin/create-app.js",
+    "start": "node ./cli/bin/create-app.js"
+  },
+  "keywords": [
+    "cli",
+    "scaffolding",
+    "template",
+    "generator"
+  ],
+  "author": "exa31",
+  "license": "ISC",
+  "files": [
+    "cli/bin",
+    "cli/src",
+    "template-express",
+    "template-fastapi-async",
+    "template-golang",
+    "template-java",
+    "template-react",
+    "template-vue",
+    "template-worker-golang",
+    "template-worker-java",
+    "template-worker-python",
+    "template-worker-typescript"
+  ],
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "fs-extra": "^11.4.1",
+    "picocolors": "^1.1.1"
+  }
+}
