@@ -134,7 +134,6 @@ const TEMPLATES = {
 // Files & directories to exclude when copying template
 const IGNORED_ENTRIES = new Set([
   '.git',
-  '.agents',
   'node_modules',
   'dist',
   'build',

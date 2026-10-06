@@ -61,13 +61,21 @@ async function scaffoldFullstackProject(options) {
     installedServices.push({ role: 'Worker', info: worker, folder: worker.defaultFolder || 'worker' });
   }
 
-  // 4. Generate Root README.md
+  // 4. Merge service .agents to root .agents so root workspace has all AI skills
+  for (const s of installedServices) {
+    const serviceAgents = path.join(targetDir, s.folder, '.agents');
+    if (await fs.pathExists(serviceAgents)) {
+      await fs.copy(serviceAgents, path.join(targetDir, '.agents'), { overwrite: false });
+    }
+  }
+
+  // 5. Generate Root README.md
   await generateRootReadme(targetDir, projectName, installedServices);
 
-  // 5. Generate Root .gitignore
+  // 6. Generate Root .gitignore
   await generateRootGitignore(targetDir);
 
-  // 6. Generate Root package.json for convenience runner scripts
+  // 7. Generate Root package.json for convenience runner scripts
   await generateRootPackageJson(targetDir, projectName, installedServices);
 
   // 7. Git Init
