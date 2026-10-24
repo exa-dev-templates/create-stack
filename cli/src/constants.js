@@ -36,7 +36,7 @@ const TEMPLATES = {
     {
       id: 'template-express',
       name: 'Express.js (TypeScript)',
-      framework: 'Node.js / Express',
+      framework: 'Node.js / Express 5',
       description: 'Clean Architecture, PostgreSQL, Redis, RabbitMQ, JWT, Realtime (WS/SSE)',
       defaultFolder: 'backend',
       devPort: 5000,
