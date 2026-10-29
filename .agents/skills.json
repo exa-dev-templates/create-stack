@@ -1,0 +1,65 @@
+{
+  "entries": [
+    {
+      "path": "template-express/.agents/skills",
+      "include_only": [
+        "typescript-backend"
+      ]
+    },
+    {
+      "path": "template-fastapi-async/.agents/skills",
+      "include_only": [
+        "python-fastapi-async"
+      ]
+    },
+    {
+      "path": "template-golang/.agents/skills",
+      "include_only": [
+        "golang-backend",
+        "write-unit-test"
+      ]
+    },
+    {
+      "path": "template-java/.agents/skills",
+      "include_only": [
+        "java-backend"
+      ]
+    },
+    {
+      "path": "template-react/.agents/skills",
+      "include_only": [
+        "frontend-react"
+      ]
+    },
+    {
+      "path": "template-vue/.agents/skills",
+      "include_only": [
+        "frontend-vue"
+      ]
+    },
+    {
+      "path": "template-worker-golang/.agents/skills",
+      "include_only": [
+        "golang-worker"
+      ]
+    },
+    {
+      "path": "template-worker-java/.agents/skills",
+      "include_only": [
+        "java-worker"
+      ]
+    },
+    {
+      "path": "template-worker-python/.agents/skills",
+      "include_only": [
+        "python-worker"
+      ]
+    },
+    {
+      "path": "template-worker-typescript/.agents/skills",
+      "include_only": [
+        "typescript-worker"
+      ]
+    }
+  ]
+}
