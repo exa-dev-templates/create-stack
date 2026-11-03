@@ -1,6 +1,7 @@
 ---
 description: Mandatory semantic error codes, English default messages, and frontend i18n locale synchronization
-globs: ["**/*.ts", "**/*.go", "**/*.py", "**/*.java"]
+trigger: glob
+globs: "**/*.{ts,go,py,java}"
 ---
 
 # Error Handling & Localization Rules

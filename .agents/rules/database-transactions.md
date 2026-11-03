@@ -1,6 +1,7 @@
 ---
 description: Mandatory pure parameter passing for database transactions, prohibiting context-based transaction resolution
-globs: ["**/*.go"]
+trigger: glob
+globs: "**/*.go"
 ---
 
 # Database Transactions: Pure Parameter Passing Rules

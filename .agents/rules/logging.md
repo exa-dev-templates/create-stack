@@ -1,6 +1,7 @@
 ---
 description: Mandatory structured logging using provided loggers across all backend templates, strictly prohibiting raw console and print statements
-globs: ["**/*.ts", "**/*.go", "**/*.py", "**/*.java"]
+trigger: glob
+globs: "**/*.{ts,go,py,java}"
 ---
 
 # Backend Logging Standards & Rules

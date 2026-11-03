@@ -1,6 +1,7 @@
 ---
 description: Mandatory skeleton loaders for frontend data fetching and content loading, strictly prohibiting circular spinners except on action buttons
-globs: ["**/*.tsx", "**/*.vue", "**/*.jsx", "**/*.ts", "**/*.js"]
+trigger: glob
+globs: "**/*.{tsx,vue,jsx,ts,js}"
 ---
 
 # Frontend Loading & Skeleton Rules
