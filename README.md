@@ -42,8 +42,8 @@ CLI menyediakan 2 mode utama pembuatan project:
 ### 🌟 Mode 1: Fullstack Project (Multi-service)
 Menggabungkan beberapa layer arsitektur ke dalam satu workspace:
 - **Frontend (FE)**: React 19 (Vite) / Vue 3 (Vite) / Skip
-- **Backend (BE)**: Express.js (TS) / FastAPI Async (Python) / Golang (Fiber) / Java (Spring Boot) / Skip
-- **Worker (Opsional)**: Golang Worker / Java Worker / Python Worker / TypeScript Worker / Skip
+- **Backend (BE)**: Express.js (TS) / FastAPI Async (Python) / Golang (Fiber) / Java (Spring Boot) / Rust (Axum) / Skip
+- **Worker (Opsional)**: Golang Worker / Java Worker / Python Worker / TypeScript Worker / Rust Worker / Skip
 
 **Hasil Struktur Folder:**
 ```text
@@ -102,6 +102,7 @@ Setiap template dilengkapi dengan instruksi dan best practice khusus AI Agent (d
 | `template-fastapi-async` | FastAPI (Python 3) | Clean Architecture, PostgreSQL, Redis, RabbitMQ, JWT, Realtime (WS/SSE) | 8000 |
 | `template-golang` | Fiber v2 (Go) | Clean Architecture, PostgreSQL, Redis, RabbitMQ, JWT, Realtime (WS) | 8080 |
 | `template-java` | Spring Boot 3 (Java) | Clean Architecture, PostgreSQL, Redis, RabbitMQ, JWT, Realtime (WS/SSE) | 8080 |
+| `template-rust` | Axum (Rust) | Clean Architecture, PostgreSQL (SQLx), JWT, Realtime (WS/SSE), Tracing | 8080 |
 
 ### 🔄 Worker / Queue Consumer
 | Template | Framework | Tech Stack & Capabilities |
@@ -110,6 +111,7 @@ Setiap template dilengkapi dengan instruksi dan best practice khusus AI Agent (d
 | `template-worker-java` | Java / RabbitMQ | RabbitMQ Consumer (Ack/Nack, QoS Prefetch, Graceful Shutdown) |
 | `template-worker-python` | Python / RabbitMQ | RabbitMQ Consumer (Ack/Nack, QoS Prefetch, Graceful Shutdown) |
 | `template-worker-typescript` | Node.js / RabbitMQ | RabbitMQ Consumer (Ack/Nack, QoS Prefetch, Graceful Shutdown) |
+| `template-worker-rust` | Rust / RabbitMQ | RabbitMQ Consumer (Lapin, Ack/Nack, QoS Prefetch, Graceful Shutdown) |
 
 ---
 

@@ -81,6 +81,19 @@ const TEMPLATES = {
         install: './mvnw clean install -DskipTests',
         dev: './mvnw spring-boot:run'
       }
+    },
+    {
+      id: 'template-rust',
+      name: 'Rust (Axum + SQLx)',
+      framework: 'Rust / Axum',
+      description: 'Clean Architecture, PostgreSQL, Redis, RabbitMQ, JWT, Realtime (WS/SSE)',
+      defaultFolder: 'backend',
+      devPort: 8080,
+      commands: {
+        install: 'cargo build',
+        dev: 'cargo run',
+        build: 'cargo build --release'
+      }
     }
   ],
   worker: [
@@ -126,6 +139,18 @@ const TEMPLATES = {
       commands: {
         install: 'npm install',
         dev: 'npm run dev'
+      }
+    },
+    {
+      id: 'template-worker-rust',
+      name: 'Rust Worker',
+      framework: 'Rust / RabbitMQ',
+      description: 'RabbitMQ Consumer (Lapin, Ack/Nack, QoS Prefetch, Graceful Shutdown)',
+      defaultFolder: 'worker',
+      commands: {
+        install: 'cargo build',
+        dev: 'cargo run',
+        build: 'cargo build --release'
       }
     }
   ]

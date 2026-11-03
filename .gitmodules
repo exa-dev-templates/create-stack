@@ -28,3 +28,9 @@
 [submodule "template-worker-typescript"]
 	path = template-worker-typescript
 	url = git@github.com:exa-dev-templates/template-worker-typescript.git
+[submodule "template-rust"]
+	path = template-rust
+	url = git@github.com:exa-dev-templates/template-rust.git
+[submodule "template-worker-rust"]
+	path = template-worker-rust
+	url = git@github.com:exa-dev-templates/template-worker-rust.git

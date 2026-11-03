@@ -1,6 +1,6 @@
 {
   "name": "@exa31/create-stack",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Interactive CLI project scaffolding tool for selecting Backend, Frontend, and Worker templates",
   "main": "cli/src/index.js",
   "bin": {
@@ -30,10 +30,12 @@
     "template-golang",
     "template-java",
     "template-react",
+    "template-rust",
     "template-vue",
     "template-worker-golang",
     "template-worker-java",
     "template-worker-python",
+    "template-worker-rust",
     "template-worker-typescript"
   ],
   "dependencies": {

@@ -96,7 +96,20 @@ async function customizeTemplateFiles(targetDir, projectName, roleSuffix = '') {
     }
   }
 
-  // 4. Update .env.example if present (replace default db name)
+  // 4. Update Cargo.toml if present
+  const cargoPath = path.join(targetDir, 'Cargo.toml');
+  if (await fs.pathExists(cargoPath)) {
+    try {
+      let content = await fs.readFile(cargoPath, 'utf8');
+      const crateName = finalName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+      content = content.replace(/^name\s*=\s*"[^"]+"/m, `name = "${crateName}"`);
+      await fs.writeFile(cargoPath, content, 'utf8');
+    } catch {
+      // Ignore read errors
+    }
+  }
+
+  // 5. Update .env.example if present (replace default db name)
   const envExamplePath = path.join(targetDir, '.env.example');
   if (await fs.pathExists(envExamplePath)) {
     try {
