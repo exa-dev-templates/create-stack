@@ -6,6 +6,7 @@ const {
   customizeTemplateFiles,
   initGitRepo
 } = require('./utils');
+const { transformBackendDatabase } = require('./transformers/databaseTransformer');
 
 /**
  * Generates a fullstack project combining multiple templates
@@ -17,6 +18,7 @@ async function scaffoldFullstackProject(options) {
     frontend,
     backend,
     worker,
+    database = 'postgres',
     createEnv = true,
     initGit = true
   } = options;
@@ -43,10 +45,13 @@ async function scaffoldFullstackProject(options) {
     const dest = path.join(targetDir, backend.defaultFolder || 'backend');
     await copyTemplateDir(src, dest);
     await customizeTemplateFiles(dest, projectName, 'backend');
+    if (database && database !== 'postgres') {
+      await transformBackendDatabase(dest, backend.id, database);
+    }
     if (createEnv && await fs.pathExists(path.join(dest, '.env.example'))) {
       await fs.copy(path.join(dest, '.env.example'), path.join(dest, '.env'));
     }
-    installedServices.push({ role: 'Backend', info: backend, folder: backend.defaultFolder || 'backend' });
+    installedServices.push({ role: 'Backend', info: backend, folder: backend.defaultFolder || 'backend', database });
   }
 
   // 3. Copy Worker
@@ -95,6 +100,7 @@ async function scaffoldSingleProject(options) {
     targetDir,
     projectName,
     template,
+    database = 'postgres',
     createEnv = true,
     initGit = true
   } = options;
@@ -106,6 +112,16 @@ async function scaffoldSingleProject(options) {
   await copyTemplateDir(src, targetDir);
   await customizeTemplateFiles(targetDir, projectName, '');
 
+  // Transform database if backend and non-default database
+  const isBackend = template.id.startsWith('template-') &&
+    !template.id.includes('worker') &&
+    !template.id.includes('react') &&
+    !template.id.includes('vue');
+
+  if (database && database !== 'postgres' && isBackend) {
+    await transformBackendDatabase(targetDir, template.id, database);
+  }
+
   if (createEnv && await fs.pathExists(path.join(targetDir, '.env.example'))) {
     await fs.copy(path.join(targetDir, '.env.example'), path.join(targetDir, '.env'));
   }
@@ -116,7 +132,7 @@ async function scaffoldSingleProject(options) {
   }
 
   return {
-    installedServices: [{ role: 'Service', info: template, folder: '.' }],
+    installedServices: [{ role: 'Service', info: template, folder: '.', database }],
     gitInitialized
   };
 }
@@ -133,6 +149,9 @@ async function generateRootReadme(targetDir, projectName, services) {
     content += `### 🔹 ${s.role}: \`${s.info.name}\`\n`;
     content += `- **Location:** \`./${s.folder}\`\n`;
     content += `- **Stack:** ${s.info.framework || s.info.name}\n`;
+    if (s.database) {
+      content += `- **Primary Database:** ${s.database === 'mysql' ? 'MySQL 8.4' : 'PostgreSQL'}\n`;
+    }
     content += `- **Description:** ${s.info.description || '-'}\n`;
     if (s.info.devPort) {
       content += `- **Default Port:** \`http://localhost:${s.info.devPort}\`\n`;

@@ -83,7 +83,8 @@ Setiap template dilengkapi dengan instruksi dan best practice khusus AI Agent (d
    - `go.mod`: Mengubah nama module Go ke nama project.
    - `pom.xml`: Mengubah `artifactId` dan `name` di Maven pom.
 4. **Environment Variables**: Meng-copy `.env.example` menjadi `.env` dan menyesuaikan nama default database.
-5. **Git Auto-Init**: Menginisialisasi git repository baru (`git init`) dan membuat commit pertama secara otomatis.
+5. **Opsi Database Utama (PostgreSQL / MySQL)**: Mendukung pemilihan database utama secara interaktif (PostgreSQL default port 5432 atau MySQL port 3306). Jika memilih MySQL, CLI secara otomatis menyesuaikan file `.env`, `docker-compose.yml` (service MySQL 8.4), driver library, dan konfigurasi database backend.
+6. **Git Auto-Init**: Menginisialisasi git repository baru (`git init`) dan membuat commit pertama secara otomatis.
 
 ---
 

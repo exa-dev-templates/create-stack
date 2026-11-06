@@ -7,6 +7,7 @@ const {
   isDirEmpty,
   discoverAllTemplates
 } = require('./utils');
+const { SUPPORTED_DATABASES } = require('./constants');
 
 async function runInteractiveWizard(cliArgs = {}) {
   p.intro(pc.bgCyan(pc.black(' 🚀 PROJECT TEMPLATE WIZARD ')));
@@ -150,6 +151,28 @@ async function runInteractiveWizard(cliArgs = {}) {
       process.exit(1);
     }
 
+    // D. Database Choice (only if Backend was chosen)
+    let database = 'postgres';
+    if (chosenBeId !== 'none') {
+      if (cliArgs.database && ['postgres', 'mysql'].includes(cliArgs.database.toLowerCase())) {
+        database = cliArgs.database.toLowerCase();
+      } else {
+        database = await p.select({
+          message: 'Pilih Database Utama (Primary Database):',
+          options: SUPPORTED_DATABASES.map(db => ({
+            value: db.id,
+            label: db.label,
+            hint: db.hint
+          })),
+          initialValue: 'postgres'
+        });
+        if (p.isCancel(database)) {
+          p.cancel('Operasi dibatalkan.');
+          process.exit(0);
+        }
+      }
+    }
+
     // Extra options
     const createEnv = await p.confirm({
       message: 'Generate file .env otomatis dari .env.example?',
@@ -176,6 +199,7 @@ async function runInteractiveWizard(cliArgs = {}) {
       frontend: allTemplates.frontend.find(t => t.id === chosenFeId) || null,
       backend: allTemplates.backend.find(t => t.id === chosenBeId) || null,
       worker: allTemplates.worker.find(t => t.id === chosenWorkerId) || null,
+      database,
       createEnv,
       initGit
     };
@@ -212,6 +236,28 @@ async function runInteractiveWizard(cliArgs = {}) {
 
     const template = available.find(t => t.id === chosenTemplateId);
 
+    // Prompt for Database if category is backend
+    let database = 'postgres';
+    if (category === 'backend') {
+      if (cliArgs.database && ['postgres', 'mysql'].includes(cliArgs.database.toLowerCase())) {
+        database = cliArgs.database.toLowerCase();
+      } else {
+        database = await p.select({
+          message: 'Pilih Database Utama (Primary Database):',
+          options: SUPPORTED_DATABASES.map(db => ({
+            value: db.id,
+            label: db.label,
+            hint: db.hint
+          })),
+          initialValue: 'postgres'
+        });
+        if (p.isCancel(database)) {
+          p.cancel('Operasi dibatalkan.');
+          process.exit(0);
+        }
+      }
+    }
+
     const createEnv = await p.confirm({
       message: 'Generate file .env otomatis dari .env.example?',
       initialValue: true
@@ -235,6 +281,7 @@ async function runInteractiveWizard(cliArgs = {}) {
       projectName,
       targetDir,
       template,
+      database,
       createEnv,
       initGit
     };

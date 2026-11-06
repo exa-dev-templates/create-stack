@@ -171,8 +171,32 @@ const IGNORED_ENTRIES = new Set([
   '.vscode'
 ]);
 
+const SUPPORTED_DATABASES = [
+  {
+    id: 'postgres',
+    name: 'PostgreSQL',
+    label: '🐘 PostgreSQL (Default)',
+    hint: 'Port 5432, full PostgreSQL features',
+    defaultPort: 5432,
+    defaultUser: 'postgres',
+    defaultPassword: 'password',
+    dockerImage: 'postgres:16-alpine'
+  },
+  {
+    id: 'mysql',
+    name: 'MySQL',
+    label: '🐬 MySQL',
+    hint: 'Port 3306, MySQL 8.4 LTS',
+    defaultPort: 3306,
+    defaultUser: 'root',
+    defaultPassword: 'password',
+    dockerImage: 'mysql:8.4'
+  }
+];
+
 module.exports = {
   TEMPLATES_ROOT,
   TEMPLATES,
-  IGNORED_ENTRIES
+  IGNORED_ENTRIES,
+  SUPPORTED_DATABASES
 };

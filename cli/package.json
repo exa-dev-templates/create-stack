@@ -1,6 +1,6 @@
 {
   "name": "@exa31/create-stack",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Interactive CLI project scaffolding tool for selecting Backend, Frontend, and Worker templates",
   "main": "src/index.js",
   "bin": {
@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node ./bin/create-app.js",
-    "create": "node ./bin/create-app.js"
+    "create": "node ./bin/create-app.js",
+    "test": "node ./test/test-scaffold.js"
   },
   "keywords": [
     "cli",

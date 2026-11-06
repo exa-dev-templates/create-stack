@@ -15,6 +15,7 @@ ${pc.bold('Penggunaan:')}
 ${pc.bold('Options:')}
   --name, -n <nama>     Nama project yang akan dibuat
   --mode, -m <mode>     Mode project: 'fullstack' atau 'single'
+  --db, -d <database>   Database utama: 'postgres' atau 'mysql'
   --help, -h            Tampilkan bantuan ini
   --version, -v         Tampilkan versi
   `);
@@ -42,6 +43,8 @@ async function main() {
       cliArgs.name = args[++i];
     } else if (args[i] === '--mode' || args[i] === '-m') {
       cliArgs.mode = args[++i];
+    } else if (args[i] === '--db' || args[i] === '-d' || args[i] === '--database') {
+      cliArgs.database = args[++i];
     } else if (!args[i].startsWith('-') && !cliArgs.name) {
       cliArgs.name = args[i];
     }

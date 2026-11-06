@@ -21,7 +21,7 @@ Repositori ini adalah kumpulan template arsitektur standar untuk backend (Expres
 ### C. Database Transactions (Rules: `.agents/rules/database-transactions.md`)
 - Operasi mutasi database wajib berada dalam transaksi.
 - Pada Go: Wajib *pure parameter passing* (`tx *sqlx.Tx`). Dilarang menyimpan atau mengambil transaksi dari `context.Context`.
-- Pada Rust: Wajib *pure parameter passing* (`&mut sqlx::Transaction<'_, sqlx::Postgres>`). Dilarang menyembunyikan transaksi dalam task-local context.
+- Pada Rust: Wajib *pure parameter passing* (`&mut sqlx::Transaction<'_, sqlx::Postgres>` atau `&mut sqlx::Transaction<'_, sqlx::MySql>`). Dilarang menyembunyikan transaksi dalam task-local context.
 - Pada Java: Wajib `@Transactional` untuk operasi mutasi dan `@Transactional(readOnly = true)` untuk operasi pembacaan.
 
 ### D. Frontend Loading State & Skeleton (Rules: `.agents/rules/frontend-loading.md` | Skill: `frontend-loading-skeleton`)
