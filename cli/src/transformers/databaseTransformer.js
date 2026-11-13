@@ -160,8 +160,9 @@ async function transformExpress(targetDir) {
   if (await fs.pathExists(pkgPath)) {
     try {
       const pkg = await fs.readJson(pkgPath);
-      if (pkg.dependencies && pkg.dependencies.pg) {
+      if (pkg.dependencies) {
         delete pkg.dependencies.pg;
+        delete pkg.dependencies['node-pg-migrate'];
         pkg.dependencies.mysql2 = '^3.11.3';
       }
       if (pkg.devDependencies) {
@@ -453,6 +454,80 @@ migrate().catch(err => {
 `;
 
   await fs.writeFile(path.join(scriptsDir, 'migrate.js'), migrateScriptContent, 'utf8');
+
+  // 4b. Overwrite src/config/migrate.ts with MySQL implementation
+  const migrateConfigPath = path.join(targetDir, 'src', 'config', 'migrate.ts');
+  const mysqlMigrateConfigContent = `import mysql from 'mysql2/promise';
+import logger from '../utils/logger';
+
+export async function runAutoMigrations (): Promise<void> {
+  const config = {
+    host: process.env.DATABASE_HOST || 'localhost',
+    port: parseInt(process.env.DATABASE_PORT || '3306', 10),
+    user: process.env.DATABASE_USER || 'root',
+    password: process.env.DATABASE_PASSWORD || 'password',
+    database: process.env.DATABASE_NAME || 'mydb'
+  };
+
+  logger.info('Executing MySQL database auto-migrations...');
+
+  let connection;
+  try {
+    connection = await mysql.createConnection(config);
+
+    await connection.query(\`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(36) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        password VARCHAR(255),
+        phone VARCHAR(50),
+        role VARCHAR(50) NOT NULL DEFAULT 'user',
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_users_email (email)
+      );
+    \`);
+
+    await connection.query(\`
+      CREATE TABLE IF NOT EXISTS refresh_tokens (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        user_id VARCHAR(36) NOT NULL,
+        token_hash VARCHAR(255) NOT NULL UNIQUE,
+        expires_at TIMESTAMP NOT NULL,
+        revoked_at TIMESTAMP NULL,
+        user_agent VARCHAR(500),
+        ip_address VARCHAR(45),
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_rf_user_id (user_id),
+        CONSTRAINT fk_rf_users FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+    \`);
+
+    await connection.query(\`
+      CREATE TABLE IF NOT EXISTS email_logs (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        recipient VARCHAR(255) NOT NULL,
+        subject VARCHAR(255) NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    \`);
+
+    logger.info('MySQL database auto-migrations applied successfully');
+  } catch (error) {
+    logger.error('MySQL database auto-migration failed', { error });
+    throw error;
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
+  }
+}
+`;
+  await fs.writeFile(migrateConfigPath, mysqlMigrateConfigContent, 'utf8');
 
   // 5. Update errorHandler.ts to recognize MySQL error codes
   const errHandlerPath = path.join(targetDir, 'src', 'middleware', 'errorHandler.ts');
