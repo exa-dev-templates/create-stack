@@ -138,11 +138,35 @@ async function runTests() {
     const beEnv = await fs.readFile(path.join(fullstackTarget, 'backend/.env'), 'utf8');
     const fePkg = await fs.readJson(path.join(fullstackTarget, 'frontend/package.json'));
     const workerMod = await fs.readFile(path.join(fullstackTarget, 'worker/go.mod'), 'utf8');
+    const hasReactAuthModule = await fs.pathExists(path.join(fullstackTarget, 'frontend/src/modules/auth/index.ts'));
+    const hasReactUsersModule = await fs.pathExists(path.join(fullstackTarget, 'frontend/src/modules/users/index.ts'));
+    const hasReactDashboardModule = await fs.pathExists(path.join(fullstackTarget, 'frontend/src/modules/dashboard/index.ts'));
     assert(rootReadme.includes('MySQL 8.4'), 'Root README must display MySQL 8.4');
     assert(beEnv.includes('3306'), 'Backend .env must have port 3306');
     assert(fePkg.name.includes('my-fullstack-app'), 'Frontend package name must be updated');
     assert(workerMod.includes('my-fullstack-app-worker'), 'Worker go.mod must be updated');
+    assert(hasReactAuthModule, 'Frontend React must have modules/auth');
+    assert(hasReactUsersModule, 'Frontend React must have modules/users');
+    assert(hasReactDashboardModule, 'Frontend React must have modules/dashboard');
     console.log('  ✓ Fullstack project passed!');
+
+    // 4. Single Frontend Test (Vue with modular structure)
+    console.log('\nChecking template-vue (Modular architecture)...');
+    const vueTarget = path.join(testBaseDir, 'vue-modular');
+    await scaffoldSingleProject({
+      targetDir: vueTarget,
+      projectName: 'test-vue-modular',
+      template: allTemplates.frontend.find(t => t.id === 'template-vue'),
+      createEnv: false,
+      initGit: false
+    });
+    const hasVueAuthModule = await fs.pathExists(path.join(vueTarget, 'src/modules/auth/index.ts'));
+    const hasVueUsersModule = await fs.pathExists(path.join(vueTarget, 'src/modules/users/index.ts'));
+    const hasVueDashboardModule = await fs.pathExists(path.join(vueTarget, 'src/modules/dashboard/index.ts'));
+    assert(hasVueAuthModule, 'Frontend Vue must have modules/auth');
+    assert(hasVueUsersModule, 'Frontend Vue must have modules/users');
+    assert(hasVueDashboardModule, 'Frontend Vue must have modules/dashboard');
+    console.log('  ✓ template-vue (Modular) passed!');
 
     console.log('\n✨ All tests passed with 100% success!\n');
   } finally {
