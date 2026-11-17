@@ -36,6 +36,12 @@ Repositori ini adalah kumpulan template arsitektur standar untuk backend (Expres
 - **WAJIB AUDIT KEAMANAN**: Setiap penambahan paket baru wajib diverifikasi keamanannya (`npm audit`, `pip-audit`, `go mod verify`, `cargo verify-project`) dan memastikan preflight check (`npm run predev` / `make preflight`) tetap lolos 100%.
 - Jika dependensi pihak ketiga menarik transitive vulnerability, wajib gunakan fitur override (`overrides` di `package.json`, `replace` di `go.mod`, `[patch]` di `Cargo.toml`).
 
+### F. Standardisasi Import & Larangan Per-Function Import (Rules: `.agents/rules/import-standards.md`)
+- **WAJIB TOP-LEVEL FIRST**: Semua deklarasi import **WAJIB** berada di baris paling atas file (*module top-level*). Dilarang menyisipkan inisialisasi variabel/eksekusi kode di sela-sela import.
+- ❌ **DILARANG KERAS IN-FUNCTION IMPORT**: Dilarang meletakkan import di dalam fungsi/method (seperti `def func(): import x` pada Python). Wajib patuhi standar resmi ekosistem (PEP 8 untuk Python, `simple-import-sort` & `import type` untuk TypeScript, `goimports` untuk Go, `rustfmt` untuk Rust, larangan wildcard `.*` untuk Java).
+- ❌ **DILARANG WILDCARD IMPORT**: Dilarang menggunakan wildcard (`from x import *`, `import java.util.*`). Semua simbol wajib diimpor secara eksplisit agar mudah di-trace.
+- **IKUTI BEST PRACTICE RESMI**: Dilarang mengarang konvensi import sendiri (*jangan ngide*). Wajib ikuti pengelompokan baku yang telah ditentukan aturan (Standard Library -> Third Party -> Internal Application Modules).
+
 ---
 
 ## 2. Struktur Template & Lokasi Modul
