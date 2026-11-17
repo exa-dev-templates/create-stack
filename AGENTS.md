@@ -29,8 +29,10 @@ Repositori ini adalah kumpulan template arsitektur standar untuk backend (Expres
 - ❌ **DILARANG LOADING MUTER**: Dilarang menggunakan circular spinner / spinner berputar untuk memuat konten halaman, tabel, atau list.
 - ✅ **KECUALI BUTTON**: Spinner berputar HANYA diizinkan pada komponen **Button** saat tombol aksi (Submit, Simpan, Hapus) sedang memproses request.
 
-### E. Keamanan Dependensi & Larangan Paket Rentan (Rules: `.agents/rules/package-security.md`)
+### E. Keamanan Dependensi & Larangan Dependensi Sembarangan (Rules: `.agents/rules/package-security.md`)
+- ❌ **DILARANG SEMBARANGAN MENAMBAH DEPS**: Wajib prinsip **Native-First & Zero-Bloat**. Dilarang menginstal library luar untuk utilitas sepele yang bisa dibuat dengan < 30 baris kode standar bawaan bahasa/runtime (hindari micro-packages seperti `is-odd`, `left-pad`, serta bloatware seperti `moment.js` atau full `lodash`).
 - ❌ **DILARANG KERAS** menambahkan/menginstal package atau dependensi yang memiliki celah keamanan (*Known Vulnerabilities / CVE* tingkat High atau Critical), berstatus *deprecated*, atau *unmaintained*.
+- **EVALUASI 5 PILAR**: Wajib evaluasi kebutuhan (*Necessity*), ukuran (*Bundle/Binary Size*), kedalaman (*Transitive Depth*), pemeliharaan (*Maintenance*), dan lisensi (*Permissive License: MIT/Apache/BSD*) sebelum menginstal.
 - **WAJIB AUDIT KEAMANAN**: Setiap penambahan paket baru wajib diverifikasi keamanannya (`npm audit`, `pip-audit`, `go mod verify`, `cargo verify-project`) dan memastikan preflight check (`npm run predev` / `make preflight`) tetap lolos 100%.
 - Jika dependensi pihak ketiga menarik transitive vulnerability, wajib gunakan fitur override (`overrides` di `package.json`, `replace` di `go.mod`, `[patch]` di `Cargo.toml`).
 
