@@ -11,9 +11,11 @@
     "access": "public"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "create": "node ./cli/bin/create-app.js",
     "start": "node ./cli/bin/create-app.js",
-    "test:cli": "node ./cli/test/test-scaffold.js"
+    "test:cli": "node ./cli/test/test-scaffold.js",
+    "audit:all": "osv-scanner scan -r ."
   },
   "keywords": [
     "cli",

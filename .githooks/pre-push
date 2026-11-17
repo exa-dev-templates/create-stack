@@ -1,0 +1,63 @@
+#!/bin/sh
+# Universal pre-push hook: Security Audit & Integrity Check
+# Prevents pushing code with high/critical security vulnerabilities.
+
+set -e
+
+# Ensure developer bin paths are available in hook environment
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:/opt/miniconda3/bin:$PATH"
+if [ -d "$HOME/.nvm/versions/node" ]; then
+    LATEST_NODE=$(ls -1d "$HOME/.nvm/versions/node"/v* 2>/dev/null | tail -n 1)
+    [ -n "$LATEST_NODE" ] && export PATH="$LATEST_NODE/bin:$PATH"
+fi
+if [ -d "$HOME/.gvm/gos" ]; then
+    LATEST_GO=$(ls -1d "$HOME/.gvm/gos"/go* 2>/dev/null | tail -n 1)
+    [ -n "$LATEST_GO" ] && export PATH="$LATEST_GO/bin:$PATH"
+fi
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+CYAN='\033[1;36m'
+YELLOW='\033[1;33m'
+RESET='\033[0m'
+
+echo "${CYAN}🔒 [Git Pre-push Hook] Menjalankan audit keamanan dependensi sebelum push...${RESET}"
+
+# Audit Node templates
+for dir in template-express template-react template-vue template-worker-typescript; do
+    if [ -f "$dir/package.json" ]; then
+        echo "  🛡️  Memeriksa $dir (npm audit)..."
+        if ! (cd "$dir" && npm audit --audit-level=high >/dev/null 2>&1); then
+            echo "${RED}  ❌ npm audit mendeteksi kerentanan High/Critical pada $dir!${RESET}"
+            echo "\n${RED}⛔ [PUSH DITOLAK] Jalankan 'npm audit fix' pada $dir sebelum push.${RESET}\n"
+            exit 1
+        fi
+    fi
+done
+
+# Audit Go modules integrity
+for dir in template-golang template-worker-golang; do
+    if [ -f "$dir/go.mod" ]; then
+        echo "  🐹 Memverifikasi $dir (go mod verify)..."
+        if ! (cd "$dir" && go mod verify >/dev/null 2>&1); then
+            echo "${RED}  ❌ go mod verify gagal pada $dir!${RESET}"
+            echo "\n${RED}⛔ [PUSH DITOLAK] Integritas modul Go bermasalah pada $dir.${RESET}\n"
+            exit 1
+        fi
+    fi
+done
+
+# Audit Rust cargo project
+for dir in template-rust template-worker-rust; do
+    if [ -f "$dir/Cargo.toml" ]; then
+        echo "  🦀 Memverifikasi $dir (cargo verify-project)..."
+        if ! (cd "$dir" && cargo verify-project >/dev/null 2>&1); then
+            echo "${RED}  ❌ Cargo project tidak valid pada $dir!${RESET}"
+            echo "\n${RED}⛔ [PUSH DITOLAK] Manifest Rust bermasalah pada $dir.${RESET}\n"
+            exit 1
+        fi
+    fi
+done
+
+echo "${GREEN}✅ [Git Pre-push Hook] Semua audit keamanan lolos! Melanjutkan push...${RESET}\n"
+exit 0
