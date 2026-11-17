@@ -53,12 +53,15 @@ Sebelum mengetik `npm install`, `go get`, `cargo add`, atau menambahkan baris di
 | :--- | :--- | :--- |
 | **Frontend / TS** | `moment`, `moment-timezone` | Native `Intl.DateTimeFormat`, native `Date`, atau `dayjs` (modular) |
 | **Frontend / TS** | `lodash` (monolitik) | Native ES6+ methods (`map`, `filter`, `reduce`, `find`, `structuredClone`) |
-| **Frontend / TS** | `request`, `superagent`, `axios` (untuk fetch sederhana) | Native `fetch` bawaan browser & Node.js 18+ |
+| **Frontend / TS** | `request`, `superagent` (deprecated) | Native `fetch` (untuk kebutuhan sederhana tanpa auth queue) atau `axios` (standar SPA: interceptor, refresh token queue, cancellation) |
 | **Frontend / TS** | `uuid` (jika hanya butuh v4 di browser modern/Node 18+) | Native `crypto.randomUUID()` |
 | **Go** | Library parsing URL / query ad-hoc | Standard library `net/url`, `net/http` |
 | **Go** | Library slice/map manipulation pihak ketiga | Standard library Go 1.21+ (`slices`, `maps`, `cmp`) |
 | **Python** | `requests` (di async codebase) | `httpx` (async) atau standard library `urllib` |
 | **Rust** | Krate macro besar untuk tugas sepele | Standard library Rust & derive macros resmi |
+
+> [!NOTE]
+> **Catatan Penggunaan Axios**: Library `axios` **DISETUJUI & DIREKOMENDASIKAN** untuk aplikasi client/frontend (`template-react`, `template-vue`) yang membutuhkan fitur terstruktur seperti: interceptor request/response, antrean auto-refresh token (401 concurrent retry queue), penanganan credentials/cookies (`withCredentials: true`), dan standardisasi error handling. Larangan hanya berlaku untuk library usang seperti `request`/`superagent` atau memasang wrapper HTTP di backend/script sepele yang cukup memakai native `fetch`.
 
 ---
 
