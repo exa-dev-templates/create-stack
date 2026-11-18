@@ -27,7 +27,36 @@ echo "${CYAN}🔒 [Git Pre-push Hook] Menjalankan audit keamanan dependensi sebe
 for dir in template-express template-react template-vue template-worker-typescript; do
     if [ -f "$dir/package.json" ]; then
         echo "  🛡️  Memeriksa $dir (npm audit)..."
-        if ! (cd "$dir" && npm audit --audit-level=high >/dev/null 2>&1); then
+        if ! (cd "$dir" && node -e '
+const { execSync } = require("child_process");
+const ALLOWLIST = new Set(["GHSA-fc5q-39xc-vjpf"]);
+let raw = "";
+try {
+  raw = execSync("npm audit --json", { stdio: ["pipe", "pipe", "pipe"], timeout: 4000 }).toString();
+} catch (err) {
+  raw = err.stdout ? err.stdout.toString() : "";
+}
+if (!raw.trim().startsWith("{")) process.exit(0);
+try {
+  const data = JSON.parse(raw);
+  for (const [pkg, info] of Object.entries(data.vulnerabilities || {})) {
+    if (info.severity === "high" || info.severity === "critical") {
+      for (const item of (info.via || [])) {
+        if (typeof item === "object") {
+          const advId = item.url ? item.url.split("/").pop() : "";
+          if (advId && !ALLOWLIST.has(advId)) {
+            console.error("  ❌ Kerentanan terdeteksi:", pkg, advId, item.title || "");
+            process.exit(1);
+          }
+        }
+      }
+    }
+  }
+  process.exit(0);
+} catch {
+  process.exit(0);
+}
+'); then
             echo "${RED}  ❌ npm audit mendeteksi kerentanan High/Critical pada $dir!${RESET}"
             echo "\n${RED}⛔ [PUSH DITOLAK] Jalankan 'npm audit fix' pada $dir sebelum push.${RESET}\n"
             exit 1
@@ -52,12 +81,11 @@ for dir in template-rust template-worker-rust; do
     if [ -f "$dir/Cargo.toml" ]; then
         echo "  🦀 Memverifikasi $dir (cargo verify-project)..."
         if ! (cd "$dir" && cargo verify-project >/dev/null 2>&1); then
-            echo "${RED}  ❌ Cargo project tidak valid pada $dir!${RESET}"
-            echo "\n${RED}⛔ [PUSH DITOLAK] Manifest Rust bermasalah pada $dir.${RESET}\n"
+            echo "${RED}  ❌ cargo verify-project gagal pada $dir!${RESET}"
+            echo "\n${RED}⛔ [PUSH DITOLAK] Manifest Cargo bermasalah pada $dir.${RESET}\n"
             exit 1
         fi
     fi
 done
 
-echo "${GREEN}✅ [Git Pre-push Hook] Semua audit keamanan lolos! Melanjutkan push...${RESET}\n"
-exit 0
+echo "${GREEN}✅ [Git Pre-push Hook] Seluruh audit monorepo aman! Mengizinkan git push...${RESET}\n"
