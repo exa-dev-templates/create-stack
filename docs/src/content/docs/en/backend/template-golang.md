@@ -19,39 +19,87 @@ The `template-golang` starter kit is a high-performance REST API backend written
 
 ---
 
-## ⚡ Transaction Implementation Pattern (Pure Parameter Passing)
+## ⚡ Real-World Transaction Pattern (TransactionManager & Pure Parameter Passing)
 
-Per monorepo standard (`database-transactions.md`), transactions must be passed as explicit parameters:
+Following the monorepo standard (`database-transactions.md`), this template strictly prohibits "magic context" and avoids repetitive `BeginTxx / defer tx.Rollback / Commit` boilerplate in every service method. Instead, `database.TransactionManager` (`s.tm`) manages transaction lifecycle safely (with panic recovery & context cancellation) while enforcing **pure parameter passing (`tx *sqlx.Tx`)** to the repository layer.
 
-```go title="internal/service/user_service.go"
-func (s *UserService) Register(ctx context.Context, req *dto.RegisterRequest) (*dto.UserResponse, error) {
-    // 1. Begin sqlx transaction
-    tx, err := s.db.BeginTxx(ctx, nil)
-    if err != nil {
-        return nil, err
-    }
-    defer tx.Rollback() // Safe rollback on error or panic
+### 1. Read-Only Operations (`GetAll`)
+For query operations, the service uses `WithReadOnlyTransactionCtx`:
 
-    // 2. Explicitly pass tx to repository
-    existing, err := s.userRepo.FindByEmail(ctx, tx, req.Email)
-    if err == nil && existing != nil {
-        return nil, errors.NewAppError(constants.CodeEmailAlreadyExists, "Email is already taken", 409)
-    }
+```go title="internal/module/user/service.go"
+func (s *userService) GetAll(ctx context.Context) ([]UserResponse, error) {
+	var users []User
+	err := s.tm.WithReadOnlyTransactionCtx(ctx, func(tx *sqlx.Tx) error {
+		var err error
+		users, err = s.repo.GetAll(ctx, tx)
+		return err
+	})
+	if err != nil {
+		return nil, appErrors.DatabaseError("Failed to fetch users", err)
+	}
 
-    user := &entity.User{
-        Email:    req.Email,
-        Password: hashedPassword,
-    }
-    if err := s.userRepo.Create(ctx, tx, user); err != nil {
-        return nil, err
-    }
+	res := make([]UserResponse, 0, len(users))
+	for i := range users {
+		res = append(res, users[i].toResponse())
+	}
+	return res, nil
+}
+```
 
-    // 3. Commit transaction on success
-    if err := tx.Commit(); err != nil {
-        return nil, err
-    }
+### 2. Mutation Operations (`Create`)
+For write operations (`INSERT`, `UPDATE`, `DELETE`), business logic is wrapped in `WithTransactionCtx`. The `tx` pointer is explicitly forwarded to all repository methods:
 
-    return dto.ToUserResponse(user), nil
+```go title="internal/module/user/service.go"
+func (s *userService) Create(ctx context.Context, req *CreateUserRequest) (*UserResponse, error) {
+	var res *UserResponse
+	err := s.tm.WithTransactionCtx(ctx, func(tx *sqlx.Tx) error {
+		// Verify email uniqueness inside the transaction
+		exists, err := s.repo.ExistsByEmail(ctx, tx, req.Email)
+		if err != nil {
+			return appErrors.DatabaseError("Failed to check email existence", err)
+		}
+		if exists {
+			return appErrors.EmailAlreadyExists()
+		}
+
+		user := &User{
+			ID:        uuid.New().String(),
+			Name:      req.Name,
+			Email:     req.Email,
+			Role:      "user",
+			IsActive:  true,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+
+		// Explicitly pass tx to repository
+		if err := s.repo.Create(ctx, tx, user); err != nil {
+			return appErrors.ParseDatabaseError(err)
+		}
+
+		u := user.toResponse()
+		res = &u
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+```
+
+### 3. Repository Layer (Enforcing Mandatory Transaction)
+Every repository method validates that `tx` is non-nil and runs queries directly on `tx`:
+
+```go title="internal/module/user/repository.go"
+func (r *userRepository) Create(ctx context.Context, tx *sqlx.Tx, user *User) error {
+	if tx == nil {
+		return errors.New("transaction is required")
+	}
+	query := `INSERT INTO users (id, name, email, phone, role, is_active, created_at, updated_at) 
+	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	_, err := tx.ExecContext(ctx, query, user.ID, user.Name, user.Email, user.Phone, user.Role, user.IsActive, user.CreatedAt, user.UpdatedAt)
+	return err
 }
 ```
 
