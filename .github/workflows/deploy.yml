@@ -21,7 +21,7 @@ jobs:
     with:
       app_name: create-stack-docs
       namespace: create-stack
-      image_name: ghcr.io/exa31/create-stack-docs
+      image_name: ghcr.io/exa-dev-templates/create-stack-docs
       docker_context: ./docs
       dockerfile: ./docs/Dockerfile
       node_version: "22"
@@ -31,6 +31,6 @@ jobs:
       push_latest: true
       tag_prefix: "docs-"
     secrets:
-      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SSH_KEY: ${{ secrets.SSH_KEY }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
