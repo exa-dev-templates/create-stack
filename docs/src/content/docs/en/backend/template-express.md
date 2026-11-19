@@ -241,9 +241,42 @@ await kafka.publish('orders-events', [
 
 ---
 
-## 🛡️ Idempotency & Zod Validation Boundary
+## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
 
-To protect mission-critical endpoints (such as payments or balance deductions) against duplicate processing caused by client-side retries, the idempotency middleware evaluates the `X-Idempotency-Key` header against Redis. Subsequent requests with the same key return the cached response or a `409 Conflict`.
+To protect critical mutating endpoints (e.g. payment processing, order creation, balance updates) against duplicate executions caused by network retries, `template-express` provides production-ready idempotency middleware in `src/middleware/idempotency.ts` complying with the IETF draft standard:
+
+```typescript title="src/modules/orders/routes.ts"
+import { Router } from 'express'
+import { idempotency, RedisIdempotencyStorage } from '../../middleware/idempotency'
+import { orderController } from './controller'
+
+const router = Router()
+
+// Protect mutating routes with mandatory Idempotency-Key
+router.post(
+  '/',
+  idempotency({
+    storage: new RedisIdempotencyStorage(),
+    required: true,               // Enforce Idempotency-Key header presence
+    lifetimeSeconds: 86400,       // Cache completed responses for 24 hours
+    lockTimeoutSeconds: 30        // Lock in-flight requests for 30 seconds
+  }),
+  orderController.createOrder
+)
+
+export default router
+```
+
+### Idempotency Mechanics in Express:
+1. **Header Inspection**: Evaluates `Idempotency-Key` or `X-Idempotency-Key`.
+2. **Atomic Distributed Locking**: Issues `SET idempotency:{userId}:{key} NX EX 30` in Redis. Simultaneous requests with the identical key are rejected with `409 Conflict`.
+3. **Payload Fingerprinting (SHA-256)**: Computes a hash of `userId + method + path + body`. Submitting an existing key with altered data triggers `422 Unprocessable Entity` (`IdempotencyPayloadMismatchError`).
+4. **Cached Response Replay**: For previously completed requests, cached status codes, headers, and JSON bodies are returned immediately with `Idempotent-Replayed: true`.
+5. **Safety Unlock**: Unlocks on 5xx internal server errors, allowing clients to safely retry.
+
+---
+
+## 📋 Zod Validation Boundary & Schemas
 
 Zod schemas enforce structural validity at the gateway before request bodies reach handlers:
 

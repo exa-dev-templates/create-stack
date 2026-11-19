@@ -241,9 +241,42 @@ await kafka.publish('orders-events', [
 
 ---
 
-## 🛡️ Idempotency & Zod Validation Boundary
+## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
 
-Untuk melindungi endpoint kritis (misal: pembayaran atau mutasi stok) dari duplikasi request akibat network retry, middleware idempotency memeriksa header `X-Idempotency-Key` di cache Redis. Jika request dengan key yang sama sedang diproses atau sudah selesai, server akan menolak atau mengembalikan response yang di-cache.
+Untuk melindungi operasi mutasi penting (seperti transaksi pembayaran, pembuatan pesanan, atau mutasi data sensitif) dari duplikasi akibat retry jaringan, `template-express` menyediakan middleware idempotency bawaan di `src/middleware/idempotency.ts` yang mematuhi standar IETF draft:
+
+```typescript title="src/modules/orders/routes.ts"
+import { Router } from 'express'
+import { idempotency, RedisIdempotencyStorage } from '../../middleware/idempotency'
+import { orderController } from './controller'
+
+const router = Router()
+
+// Terapkan proteksi idempotency pada route POST
+router.post(
+  '/',
+  idempotency({
+    storage: new RedisIdempotencyStorage(),
+    required: true,               // Wajib menyertakan header Idempotency-Key
+    lifetimeSeconds: 86400,       // Simpan response selama 24 jam (cache replay)
+    lockTimeoutSeconds: 30        // Lock in-flight request selama 30 detik
+  }),
+  orderController.createOrder
+)
+
+export default router
+```
+
+### Mekanisme Kerja Idempotency di Express:
+1. **Header Inspection**: Middleware memeriksa header `Idempotency-Key` atau `X-Idempotency-Key`.
+2. **Atomic Distributed Locking**: Melakukan `SET idempotency:{userId}:{key} NX EX 30` di Redis. Jika ada request paralel dengan key yang sama, server langsung mengembalikan `409 Conflict`.
+3. **Payload Fingerprinting (SHA-256)**: Menghitung hash SHA-256 dari `userId + method + path + body`. Jika client mengirim ulang key yang sama namun isinya berbeda, server mengembalikan `422 Unprocessable Entity` (`IdempotencyPayloadMismatchError`).
+4. **Cached Response Replay**: Jika request berhasil selesai sebelumnya, response JSON, status code, dan header asli di-replay secara instan dengan header `Idempotent-Replayed: true`.
+5. **Safety Unlock**: Jika handler menghasilkan error 5xx, lock otomatis dilepas agar client dapat melakukan retry dengan aman.
+
+---
+
+## 📋 Zod Validation Boundary & Error Handling
 
 Validasi Zod memastikan semua request payload terdefinisi dengan skema kuat:
 

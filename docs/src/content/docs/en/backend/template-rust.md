@@ -187,6 +187,34 @@ let offset = kafka.publish("app.events", Some(b"order-123".to_vec()), payload_by
 
 ---
 
+## 🛡️ Idempotency Protection Layer (Axum Middleware & Store)
+
+`template-rust` includes an ultra-fast asynchronous idempotency middleware in `src/pkg/idempotency/mod.rs` intercepting mutating HTTP requests (`POST`, `PUT`, `PATCH`) to guard against duplicate operations:
+
+```rust title="src/main.rs"
+use axum::{middleware, routing::post, Router};
+use std::sync::Arc;
+use template_rust::pkg::idempotency::{idempotency_layer, IdempotencyStore};
+
+// Initialize IdempotencyStore (24-hour lifetime, 30-second lock timeout)
+let idempotency_store = Arc::new(IdempotencyStore::default());
+
+let app = Router::new()
+    .route("/api/orders", post(create_order_handler))
+    .layer(middleware::from_fn(move |req, next| {
+        idempotency_layer(idempotency_store.clone(), req, next)
+    }));
+```
+
+### Idempotency Mechanics in Rust Axum:
+1. **Header Evaluator**: Extracts `idempotency-key` or `x-idempotency-key`.
+2. **Atomic Lock (`try_lock`)**: Marks state as `InProgress` with a 30-second timeout. Concurrent requests arriving simultaneously are rejected with HTTP `409 Conflict` and semantic code `CODE_IDEMPOTENCY_IN_FLIGHT`.
+3. **Response Buffer & Cache**: Converts Axum's response stream into cached `Bytes` stored inside `IdempotencyStore` alongside original headers.
+4. **Zero-Overhead Replay**: Subsequent requests with the same key replay directly from in-memory cache without hitting database connections, returning `idempotent-replayed: true`.
+5. **Auto Eviction**: Expired keys (> 24 hours) are cleanly evicted from store memory upon access.
+
+---
+
 ## ⚙️ Environment Variables (`.env`)
 
 ```ini title=".env"

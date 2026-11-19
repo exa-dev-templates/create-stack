@@ -1,5 +1,6 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import mermaid from 'astro-mermaid';
 
 // Dynamic support for custom domain vs default GitHub Pages
 const customDomain = process.env.CUSTOM_DOMAIN;
@@ -10,6 +11,7 @@ export default defineConfig({
   site,
   base,
   integrations: [
+    mermaid(),
     starlight({
       title: '@exa31/create-stack',
       description: 'Production-ready Scaffolding CLI & Clean Architecture Starter Kits',
@@ -83,6 +85,7 @@ export default defineConfig({
             { label: 'Structured JSON Logging', slug: 'standards/logging' },
             { label: 'Semantic Error Handling', slug: 'standards/error-handling' },
             { label: 'Database Transactions', slug: 'standards/database-transactions' },
+            { label: 'Idempotency Protection', slug: 'standards/idempotency' },
             { label: 'Frontend Skeleton Loading', slug: 'standards/frontend-loading' },
             { label: 'Package Security & Audit', slug: 'standards/package-security' },
             { label: 'Standardisasi Import', slug: 'standards/import-standards' },

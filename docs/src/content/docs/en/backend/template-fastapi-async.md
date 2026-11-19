@@ -234,6 +234,49 @@ curl -X POST http://localhost:8000/kafka-send \
 
 ---
 
+## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
+
+`template-fastapi-async` provides production-grade distributed idempotency middleware (`middleware/idempotency.py`) implementing the IETF draft specification. It guards mutating operations (`POST`, `PATCH`) against duplicate processing caused by network drops or client retries:
+
+```python title="main.py"
+from middleware.idempotency import IdempotencyMiddleware, RedisIdempotencyStorage
+
+# Register distributed idempotency middleware
+app.add_middleware(
+    IdempotencyMiddleware,
+    storage=RedisIdempotencyStorage(),
+    lifetime_seconds=86400,     # Cache response for 24 hours
+    timeout_seconds=30          # Lock in-flight request for 30 seconds
+)
+```
+
+To enforce the `Idempotency-Key` header on specific endpoints:
+
+```python title="modules/users/routes.py"
+from fastapi import APIRouter, Depends
+from middleware.idempotency import require_idempotency_key
+
+router = APIRouter(prefix="/users", tags=["Users"])
+
+@router.post(
+    "",
+    response_model=BaseResponse[UserResponse],
+    dependencies=[Depends(require_idempotency_key)]
+)
+async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
+    service = UserService(db)
+    return success_response(await service.create_user(data))
+```
+
+### Idempotency Mechanics in FastAPI:
+1. **Header Inspection**: Evaluates `Idempotency-Key` or `X-Idempotency-Key`.
+2. **Atomic Distributed Locking**: Acquires a Redis lock using `SET NX EX` for 30 seconds. Concurrent requests with the identical key receive HTTP `409 Conflict` (`IDEMPOTENCY_CONFLICT`).
+3. **Payload Fingerprint (SHA-256)**: Hashes `user_id + method + path + body`. Submitting an existing key with altered parameters returns `422 Unprocessable Entity` (`IDEMPOTENCY_PAYLOAD_MISMATCH`).
+4. **Instant Replay**: Cached status codes, headers, and bodies are replayed directly without invoking handler logic, accompanied by `Idempotent-Replayed: true`.
+5. **Auto Unlock on 5xx**: Server errors (HTTP 500+) safely release the lock so clients can retry.
+
+---
+
 ## ⚙️ Environment Variables (`.env`)
 
 ```ini title=".env"

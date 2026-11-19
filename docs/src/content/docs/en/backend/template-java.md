@@ -223,23 +223,50 @@ kafkaProducer.sendMessage("app.events", "user-123", Map.of("action", "LOGIN", "t
 
 ---
 
-## 🛡️ Idempotency Protection Layer
+## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
 
-To prevent duplicate mutation processing during client retries, `@RequireIdempotencyKey` on controller endpoints enforces `X-Idempotency-Key` validation:
+To prevent duplicate mutation processing during client retries, `template-java` provides the servlet filter `IdempotencyFilter` and custom annotation `@RequireIdempotencyKey` implementing the IETF draft standard:
 
-```java
-@PostMapping
-@RequireIdempotencyKey
-@Transactional
-public ResponseEntity<BaseResponse<OrderResponse>> createOrder(
-    @Valid @RequestBody OrderRequest request
-) {
-    OrderResponse order = orderService.createOrder(request);
-    return ResponseEntity.ok(BaseResponse.success("Order created", order));
+```java title="com/example/template/java/order/controller/OrderController.java"
+package com.example.template.java.order.controller;
+
+import com.example.template.java.common.dto.BaseResponse;
+import com.example.template.java.common.idempotency.RequireIdempotencyKey;
+import com.example.template.java.order.dto.OrderRequest;
+import com.example.template.java.order.dto.OrderResponse;
+import com.example.template.java.order.service.OrderService;
+import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/orders")
+public class OrderController {
+
+  private final OrderService orderService;
+
+  @PostMapping
+  @RequireIdempotencyKey
+  @Transactional
+  public ResponseEntity<BaseResponse<OrderResponse>> createOrder(
+      @Valid @RequestBody OrderRequest request) {
+    OrderResponse response = orderService.createOrder(request);
+    return ResponseEntity.ok(BaseResponse.success("Order created", response));
+  }
 }
 ```
 
-Keys are stored in Redis (`RedisIdempotencyStorage`) with payload fingerprinting to prevent payload discrepancies or conflict races.
+### Idempotency Mechanics in Spring Boot:
+1. **Header Extraction**: `IdempotencyFilter` reads `Idempotency-Key` or `X-Idempotency-Key`.
+2. **Distributed Redis Storage**: Backed by `RedisIdempotencyStorage` (with `MemoryIdempotencyStorage` fallback) storing responses for 24 hours (`86400s`) with 30-second locks.
+3. **Race Condition Prevention (409 Conflict)**: When an active concurrent request with the same key is in-flight (`status=in_progress`), the filter rejects it with `409 Conflict` (`IDEMPOTENCY_CONFLICT`).
+4. **Payload Fingerprinting (SHA-256)**: Computes a SHA-256 hash of the request path, method, and raw body. Reusing a key with mismatched parameters returns `422 Unprocessable Entity` (`IDEMPOTENCY_PAYLOAD_MISMATCH`).
+5. **ContentCachingResponseWrapper & Replay**: Successful responses are captured and cached alongside HTTP headers and status codes. Cached responses replay with `Idempotent-Replayed: true`.
+6. **Auto Unlock on 5xx**: Server errors or rollbacks automatically release the key in Redis so clients can retry safely.
 
 ---
 

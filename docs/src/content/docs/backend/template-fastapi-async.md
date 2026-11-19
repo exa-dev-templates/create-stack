@@ -234,6 +234,49 @@ curl -X POST http://localhost:8000/kafka-send \
 
 ---
 
+## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
+
+`template-fastapi-async` dilengkapi middleware idempotency terdistribusi penuh (`middleware/idempotency.py`) yang mengimplementasikan spesifikasi IETF draft. Middleware ini melindungi endpoint mutasi (`POST`, `PATCH`) dari duplikasi pemrosesan ketika terjadi network retry atau timeout:
+
+```python title="main.py"
+from middleware.idempotency import IdempotencyMiddleware, RedisIdempotencyStorage
+
+# Registrasi middleware idempotency terdistribusi ke FastAPI
+app.add_middleware(
+    IdempotencyMiddleware,
+    storage=RedisIdempotencyStorage(),
+    lifetime_seconds=86400,     # Simpan response cache selama 24 jam
+    timeout_seconds=30          # Lock in-flight request selama 30 detik
+)
+```
+
+Untuk mewajibkan header `Idempotency-Key` pada endpoint tertentu:
+
+```python title="modules/users/routes.py"
+from fastapi import APIRouter, Depends
+from middleware.idempotency import require_idempotency_key
+
+router = APIRouter(prefix="/users", tags=["Users"])
+
+@router.post(
+    "",
+    response_model=BaseResponse[UserResponse],
+    dependencies=[Depends(require_idempotency_key)]
+)
+async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
+    service = UserService(db)
+    return success_response(await service.create_user(data))
+```
+
+### Mekanisme Kerja di FastAPI:
+1. **Pemeriksaan Header**: Memeriksa header `Idempotency-Key` atau `X-Idempotency-Key`.
+2. **Distributed Lock Redis**: Menggunakan Redis `SET NX EX` untuk mengunci key selama 30 detik. Request paralel yang bersamaan akan menerima HTTP `409 Conflict` (`IDEMPOTENCY_CONFLICT`).
+3. **Payload Fingerprint SHA-256**: Mengkalkulasi fingerprint dari `user_id + method + path + body`. Jika key sama dikirim dengan payload berbeda, server mengembalikan `422 Unprocessable Entity` (`IDEMPOTENCY_PAYLOAD_MISMATCH`).
+4. **Instant Replay**: Response yang tersimpan (status code, headers, dan JSON body) di-replay langsung tanpa mengeksekusi ulang route handler, disertai header `Idempotent-Replayed: true`.
+5. **Auto Unlock on 5xx**: Jika terjadi error server (HTTP 500+), lock otomatis dihapus dari Redis agar client dapat mencoba kembali (*retry safely*).
+
+---
+
 ## ⚙️ Variabel Lingkungan (`.env`)
 
 ```ini title=".env"

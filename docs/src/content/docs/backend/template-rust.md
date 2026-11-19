@@ -187,6 +187,34 @@ let offset = kafka.publish("app.events", Some(b"order-123".to_vec()), payload_by
 
 ---
 
+## 🛡️ Idempotency Protection Layer (Axum Middleware & Store)
+
+`template-rust` menyertakan middleware idempotency asinkron berkecepatan tinggi di `src/pkg/idempotency/mod.rs` yang mencegat operasi mutasi HTTP (`POST`, `PUT`, `PATCH`) untuk mencegah mutasi ganda:
+
+```rust title="src/main.rs"
+use axum::{middleware, routing::post, Router};
+use std::sync::Arc;
+use template_rust::pkg::idempotency::{idempotency_layer, IdempotencyStore};
+
+// Inisialisasi IdempotencyStore (lifetime 24 jam, lock timeout 30 detik)
+let idempotency_store = Arc::new(IdempotencyStore::default());
+
+let app = Router::new()
+    .route("/api/orders", post(create_order_handler))
+    .layer(middleware::from_fn(move |req, next| {
+        idempotency_layer(idempotency_store.clone(), req, next)
+    }));
+```
+
+### Mekanisme Kerja Idempotency di Rust Axum:
+1. **Header Evaluator**: Mengekstrak header `idempotency-key` atau `x-idempotency-key`.
+2. **Atomic Lock (`try_lock`)**: Menyimpan status `InProgress` dengan timeout 30 detik. Jika request kedua tiba saat request pertama masih berjalan, server langsung mengembalikan HTTP `409 Conflict` dengan kode semantik `CODE_IDEMPOTENCY_IN_FLIGHT`.
+3. **Response Buffer & Cache**: Mengubah body stream Axum menjadi `Bytes` yang aman di-cache ke dalam `IdempotencyStore` lengkap beserta seluruh response headers.
+4. **Zero-Overhead Replay**: Jika request dengan key sama tiba setelah operasi selesai, server langsung membalas dari cache memori tanpa menyentuh database, dengan header `idempotent-replayed: true`.
+5. **Auto Eviction**: Kunci yang kadaluarsa (> 24 jam) otomatis dihapus dari store memori saat diakses.
+
+---
+
 ## ⚙️ Variabel Lingkungan (`.env`)
 
 ```ini title=".env"
