@@ -1,0 +1,41 @@
+---
+title: '@exa31/create-stack'
+description: Interactive scaffolding CLI & enterprise clean architecture starter kits
+template: splash
+hero:
+  tagline: Scaffold production-ready fullstack projects in seconds. Equipped with Frontend, Backend, Worker, Docker Infrastructure, and native AI Agent Skills.
+  image:
+    file: ../../../assets/hero-illustration.svg
+  actions:
+    - text: Get Started
+      link: /en/quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: Explore Templates
+      link: /en/backend/overview/
+      icon: external
+      variant: secondary
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="⚡ Instant Scaffolding" icon="rocket">
+    Run `npx @exa31/create-stack` with zero install. Scaffold unified multi-service fullstack apps or standalone services with an interactive CLI.
+  </Card>
+  <Card title="🎨 Modern Frontend" icon="pencil">
+    React 19 & Vue 3 featuring Tailwind CSS v4, Prime UI (Aura theme), Zustand/Pinia, and mandatory skeleton loaders (no page spinners).
+  </Card>
+  <Card title="⚙️ 5 Backend Engines" icon="setting">
+    Express.js (TS), FastAPI (Python), Fiber (Go), Spring Boot (Java), and Axum (Rust). Built-in Clean Architecture & OpenAPI 3.0.
+  </Card>
+  <Card title="🐰⚡ Dual Message Brokers" icon="laptop">
+    Flexible support for RabbitMQ 3 and Apache Kafka (KRaft) with pre-configured local Web UIs (Kafka UI :8085 & RabbitMQ :15672).
+  </Card>
+  <Card title="🤖 AI Agent Native" icon="star">
+    Automatically merges architecture skills for Antigravity, Cursor, and Claude Code into root `.agents/skills`.
+  </Card>
+  <Card title="🛡️ Enterprise Ready" icon="shield">
+    Strict transactional safety, structured JSON logging, semantic error codes, and 5-pillar package security audits.
+  </Card>
+</CardGrid>

@@ -1,0 +1,41 @@
+---
+title: '@exa31/create-stack'
+description: Generator scaffolding interaktif & koleksi template enterprise clean architecture
+template: splash
+hero:
+  tagline: Scaffolding project fullstack modern dalam hitungan detik. Dilengkapi Frontend, Backend, Worker, Docker Infra, dan AI Agent Skills bawaan.
+  image:
+    file: ../../assets/hero-illustration.svg
+  actions:
+    - text: Mulai Sekarang
+      link: /quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: Jelajahi Template
+      link: /backend/overview/
+      icon: external
+      variant: secondary
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="⚡ Scaffolding Instan" icon="rocket">
+    Jalankan `npx @exa31/create-stack` tanpa instalasi. Buat project fullstack terpadu atau single service independen dengan wizard interaktif.
+  </Card>
+  <Card title="🎨 Frontend Modern" icon="pencil">
+    React 19 & Vue 3 dengan Tailwind CSS v4, Prime UI (Aura theme), Zustand/Pinia, dan aturan skeleton loader tanpa spinner muter.
+  </Card>
+  <Card title="⚙️ 5 Pilihan Backend" icon="setting">
+    Express.js (TS), FastAPI (Python), Fiber (Go), Spring Boot (Java), dan Axum (Rust). Clean architecture & OpenAPI 3.0 bawaan.
+  </Card>
+  <Card title="🐰⚡ Dual Message Broker" icon="laptop">
+    Dukungan fleksibel RabbitMQ 3 dan Apache Kafka (KRaft) lengkap dengan dashboard Web UI (Kafka UI :8085 & RabbitMQ :15672).
+  </Card>
+  <Card title="🤖 AI Agent Native" icon="star">
+    Otomatis menggabungkan skill arsitektur untuk Antigravity, Cursor, dan Claude Code di folder `.agents/skills`.
+  </Card>
+  <Card title="🛡️ Enterprise Ready" icon="shield">
+    Strict transactional safety, structured JSON logging, semantic error codes, dan audit dependensi 5 pilar.
+  </Card>
+</CardGrid>

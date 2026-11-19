@@ -18,7 +18,10 @@
     "audit:all": "osv-scanner scan -r .",
     "infra:up": "docker compose -f docker-compose.infra.yml up -d",
     "infra:down": "docker compose -f docker-compose.infra.yml down",
-    "infra:logs": "docker compose -f docker-compose.infra.yml logs -f"
+    "infra:logs": "docker compose -f docker-compose.infra.yml logs -f",
+    "docs:dev": "npm --prefix docs run dev",
+    "docs:build": "npm --prefix docs run build",
+    "docs:preview": "npm --prefix docs run preview"
   },
   "keywords": [
     "cli",
