@@ -25,9 +25,25 @@ The `template-rust` template is an ultra-high performance REST API backend writt
 
 ---
 
-## ⚡ Database Transactions (Pure Parameter Passing `&mut Transaction`)
+## ⚡ Database Transactions (Pure Parameter Passing)
 
 Per monorepo rules (`database-transactions.md`), transactions are passed via mutable borrow `&mut Transaction<'_, Postgres>`. The service layer orchestrates atomicity across repositories:
+
+### 1. Read-Only Operations
+
+For data queries, SQLx pool references execute directly without transaction overhead:
+
+```rust title="src/modules/user/service.rs"
+pub async fn get_user_by_id(&self, id: Uuid) -> Result<UserResponse, AppError> {
+    let user = self.repo.find_by_id(&self.pool, id).await?
+        .ok_or_else(|| AppError::not_found("USER_NOT_FOUND", "User not found"))?;
+    Ok(UserResponse::from(user))
+}
+```
+
+### 2. Data Mutations & Atomic Rollback
+
+For multi-table mutations, transactions begin via `self.pool.begin().await?` and `&mut tx` is passed explicitly:
 
 ```rust title="src/modules/user/service.rs"
 use sqlx::{PgPool, Transaction, Postgres};
@@ -53,7 +69,6 @@ impl UserService {
         }
     }
 
-    /// Registers a new user inside an atomic database transaction
     pub async fn register(&self, req: CreateUserRequest) -> Result<UserResponse, AppError> {
         // 1. Begin explicit SQLx transaction
         let mut tx = self.pool.begin().await.map_err(|e| {
@@ -89,9 +104,39 @@ impl UserService {
 }
 ```
 
+### 3. Repository Layer
+
+At the repository layer, queries execute directly on `&mut Transaction<'_, Postgres>`:
+
+```rust title="src/modules/user/repository.rs"
+pub async fn create_tx(
+    &self,
+    tx: &mut Transaction<'_, Postgres>,
+    new_user: NewUser,
+) -> Result<User, AppError> {
+    let user = sqlx::query_as!(
+        User,
+        r#"
+        INSERT INTO users (email, password_hash, name, role)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, email, password_hash, name, role, created_at, updated_at
+        "#,
+        new_user.email,
+        new_user.password_hash,
+        new_user.name,
+        new_user.role
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| AppError::internal(format!("Database insert failed: {}", e)))?;
+
+    Ok(user)
+}
+```
+
 ---
 
-## 📡 Real-time Engine: SSE, WebSocket & RealtimeHub Auto-Bridge
+## 📡 Real-time Engine: SSE, WebSocket & Distributed Bridge
 
 `template-rust` delivers an ultra-fast realtime system utilizing Tokio broadcast channels and distributed bridging:
 
@@ -124,7 +169,7 @@ eventSource.onerror = (err) => {
 };
 ```
 
-### 2. WebSocket Handler
+### 2. Full-Duplex WebSocket
 The WebSocket handler (`src/modules/realtime/ws.rs`) splits the socket into two decoupled asynchronous tasks (`send_task` and `recv_task`):
 
 ```javascript title="Client WebSocket Example (Browser / Node.js)"
@@ -140,7 +185,7 @@ ws.onmessage = (event) => {
 };
 ```
 
-### 3. Distributed Bridge (`REALTIME_BRIDGE=local|redis|rabbitmq|both`)
+### 3. Distributed Auto-Bridge (Horizontal Scaling)
 The bridge system implements the `RealtimeBridge` trait:
 - **`local`**: Broadcasts events strictly to local subscribers on this node.
 - **`redis`**: Publishes and subscribes via Redis Pub/Sub (`realtime.events`).
@@ -158,16 +203,24 @@ pub async fn broadcast(&self, message: impl Into<String>) {
 }
 ```
 
+### 4. Realtime API Endpoints
+
+| Method | Endpoint | Description | Authentication |
+|---|---|---|---|
+| `GET` | `/api/v1/realtime/sse` | Opens SSE stream with 15-second keep-alive | Public |
+| `WS` | `/api/v1/realtime/ws` | Full-duplex WebSocket connection | Public |
+| `POST` | `/api/v1/realtime/broadcast` | Broadcast realtime event across all subscribers | Required (Bearer) |
+
 ---
 
 ## 🐰⚡ Dual Message Brokers: RabbitMQ & Apache Kafka
 
 The Rust backend includes ready-to-use queue modules in `src/pkg/queue/`:
 
-### 1. RabbitMQ Async Broker (`lapin`)
+### 1. RabbitMQ Producer & Consumer
 Managed by `RabbitMQBroker` (`src/pkg/queue/mod.rs`):
 
-```rust
+```rust title="src/pkg/queue/mod.rs"
 use crate::pkg::queue::RabbitMQBroker;
 
 let broker = RabbitMQBroker::new(&amqp_url).await?;
@@ -175,21 +228,32 @@ broker.declare_queue("orders_queue", true).await?;
 broker.publish("", "orders_queue", payload_bytes).await?;
 ```
 
-### 2. Apache Kafka Async Broker (`rskafka`)
+### 2. Apache Kafka Producer
 Managed by `KafkaBroker` (`src/pkg/queue/kafka.rs`):
 
-```rust
+```rust title="src/pkg/queue/kafka.rs"
 use crate::pkg::queue::KafkaBroker;
 
 let kafka = KafkaBroker::new(vec!["localhost:9092".to_string()]);
 let offset = kafka.publish("app.events", Some(b"order-123".to_vec()), payload_bytes).await?;
 ```
 
+### 3. Broker Endpoints & Testing cURL
+
+```bash title="Test Publish Event via cURL"
+curl -X POST http://localhost:8080/api/v1/realtime/broadcast \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello cluster"}'
+```
+
 ---
 
-## 🛡️ Idempotency Protection Layer (Axum Middleware & Store)
+## 🛡️ Idempotency Protection (X-Idempotency-Key)
 
-`template-rust` includes an ultra-fast asynchronous idempotency middleware in `src/pkg/idempotency/mod.rs` intercepting mutating HTTP requests (`POST`, `PUT`, `PATCH`) to guard against duplicate operations:
+`template-rust` includes an asynchronous idempotency middleware in `src/pkg/idempotency/mod.rs` intercepting mutating HTTP requests (`POST`, `PUT`, `PATCH`) to guard against duplicate operations:
+
+### 1. Middleware & Storage Configuration
 
 ```rust title="src/main.rs"
 use axum::{middleware, routing::post, Router};
@@ -206,7 +270,7 @@ let app = Router::new()
     }));
 ```
 
-### Idempotency Mechanics in Rust Axum:
+### 2. Lock, Fingerprint & Replay Mechanics
 1. **Header Evaluator**: Extracts `idempotency-key` or `x-idempotency-key`.
 2. **Atomic Lock (`try_lock`)**: Marks state as `InProgress` with a 30-second timeout. Concurrent requests arriving simultaneously are rejected with HTTP `409 Conflict` and semantic code `CODE_IDEMPOTENCY_IN_FLIGHT`.
 3. **Response Buffer & Cache**: Converts Axum's response stream into cached `Bytes` stored inside `IdempotencyStore` alongside original headers.
@@ -215,7 +279,41 @@ let app = Router::new()
 
 ---
 
-## ⚙️ Environment Variables (`.env`)
+## 📋 Request Validation & Boundaries
+
+Validates incoming DTO structures using `ValidatedJson<T>` on top of `validator`:
+
+```rust title="src/modules/user/dto.rs"
+use serde::Deserialize;
+use validator::Validate;
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct CreateUserRequest {
+    #[validate(length(min = 3, max = 50, message = "Name must be between 3 and 50 characters"))]
+    pub name: String,
+
+    #[validate(email(message = "Invalid email address"))]
+    pub email: String,
+
+    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
+    pub password: String,
+}
+```
+
+In controller handlers:
+```rust
+pub async fn register_user(
+    State(service): State<Arc<UserService>>,
+    ValidatedJson(req): ValidatedJson<CreateUserRequest>,
+) -> Result<Json<BaseResponse<UserResponse>>, AppError> {
+    let user = service.register(req).await?;
+    Ok(Json(BaseResponse::success("User registered successfully", user)))
+}
+```
+
+---
+
+## ⚙️ Environment Variables & Configuration
 
 ```ini title=".env"
 # Server Configuration

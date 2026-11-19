@@ -26,9 +26,26 @@ The `template-java` template is an enterprise backend starter kit built on **Jav
 
 ---
 
-## ⚡ Database Transactions (`@Transactional` Declarative Boundaries)
+## ⚡ Database Transactions (Pure Parameter Passing)
 
-As mandated by monorepo guidelines (`database-transactions.md`), database transactions are declaratively managed using Spring AOP `@Transactional`. A clear distinction is made between mutations (automatic rollback on unchecked exceptions) and read operations (`readOnly = true`) to bypass Hibernate dirty-checking overhead:
+As mandated by monorepo guidelines (`database-transactions.md`), database transactions are declaratively managed using Spring AOP `@Transactional`. A clear distinction is made between mutations and read-only operations:
+
+### 1. Read-Only Operations
+
+Read-only queries must supply `readOnly = true` to bypass Hibernate dirty-checking overhead:
+
+```java title="src/main/java/com/example/template/java/user/service/UserService.java"
+@Transactional(readOnly = true)
+public User getUserById(Long id) {
+  return userRepository
+      .findById(id)
+      .orElseThrow(() -> new BusinessException("User not found", ApiCode.USER_NOT_FOUND));
+}
+```
+
+### 2. Data Mutations & Atomic Rollback
+
+Data mutations (`INSERT`, `UPDATE`, `DELETE`) are annotated with `@Transactional`. Any unchecked exception (`RuntimeException`) automatically triggers transaction rollback:
 
 ```java title="src/main/java/com/example/template/java/user/service/UserService.java"
 package com.example.template.java.user.service;
@@ -58,10 +75,6 @@ public class UserService {
     this.passwordEncoder = passwordEncoder;
   }
 
-  /**
-   * Data mutations MUST use @Transactional.
-   * Any unchecked exception (RuntimeException) automatically triggers a transaction rollback.
-   */
   @Transactional
   public User createUser(UserRequest request) {
     Optional<User> existing = userRepository.findByEmail(request.getEmail());
@@ -78,22 +91,31 @@ public class UserService {
     log.info("Successfully registered user with ID: {}", savedUser.getId());
     return savedUser;
   }
+}
+```
 
-  /**
-   * Read queries MUST use @Transactional(readOnly = true)
-   */
-  @Transactional(readOnly = true)
-  public User getUserById(Long id) {
-    return userRepository
-        .findById(id)
-        .orElseThrow(() -> new BusinessException("User not found", ApiCode.USER_NOT_FOUND));
-  }
+### 3. Repository Layer
+
+The repository layer extends `JpaRepository` from Spring Data JPA, keeping database queries isolated:
+
+```java title="src/main/java/com/example/template/java/user/repository/UserRepository.java"
+package com.example.template.java.user.repository;
+
+import com.example.template.java.user.model.User;
+import java.util.Optional;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface UserRepository extends JpaRepository<User, Long> {
+  Optional<User> findByEmail(String email);
+  boolean existsByEmail(String email);
 }
 ```
 
 ---
 
-## 📡 Real-time Engine: SSE, WebSocket STOMP & Pluggable Bridge
+## 📡 Real-time Engine: SSE, WebSocket & Distributed Bridge
 
 `template-java` offers a distributed realtime engine bridging browser clients across Kubernetes cluster pods:
 
@@ -128,7 +150,7 @@ eventSource.onerror = (error) => {
 };
 ```
 
-### 2. WebSocket STOMP & SockJS
+### 2. Full-Duplex WebSocket
 Orchestrated by `WebSocketConfig` exposing STOMP endpoints at `/ws`, application prefix `/app`, and broker destinations `/topic` and `/queue`:
 
 ```javascript title="Client STOMP Example (JavaScript / React)"
@@ -141,19 +163,19 @@ const stompClient = Stomp.over(socket);
 stompClient.connect({}, (frame) => {
   console.log('STOMP Connected:', frame);
 
-  // Subscribe to a public topic channel
+  // Subscribe to public channel
   stompClient.subscribe('/topic/announcements', (message) => {
     console.log('Announcement:', JSON.parse(message.body));
   });
 
-  // Subscribe to personal user notifications
+  // Subscribe to personal notifications
   stompClient.subscribe('/user/queue/notifications', (message) => {
     console.log('Personal Notification:', JSON.parse(message.body));
   });
 });
 ```
 
-### 3. Pluggable Realtime Bridge (`app.realtime.bridge`)
+### 3. Distributed Auto-Bridge (Horizontal Scaling)
 Guarantees inter-pod message propagation:
 - **`local`**: `LocalRealtimeBridge` limits distribution to the local JVM process (ideal for testing and standalone dev).
 - **`redis`**: `RedisRealtimeBridge` uses Redis pub/sub channel `realtime:events`.
@@ -178,17 +200,13 @@ app.realtime.bridge=redis  # Options: local | redis | rabbitmq
 | `POST` | `/api/demo/realtime/announcement` | Broadcasts global announcement across all listeners | Public |
 | `POST` | `/api/demo/realtime/channel` | Sends data to a specific realtime topic channel | Public |
 
-```bash title="cURL Dispatch Realtime Notification"
-curl -X POST "http://localhost:8080/api/demo/realtime/notify?userId=12&title=Update&message=Your+order+shipped&type=info"
-```
-
 ---
 
 ## 🐰⚡ Dual Message Brokers: RabbitMQ & Apache Kafka
 
 The Spring Boot backend includes enterprise publisher and consumer implementations:
 
-### 1. RabbitMQ Producer & Consumer (`messaging/rabbit/`)
+### 1. RabbitMQ Producer & Consumer
 Uses `RabbitTemplate` for sending and `@RabbitListener` for automatic consumer processing:
 
 ```java title="Producer Example"
@@ -206,12 +224,11 @@ public class RabbitMQConsumerService {
   @RabbitListener(queues = "${app.rabbitmq.queue.name}")
   public void receiveMessage(Map<String, Object> payload) {
     log.info("Received RabbitMQ message from queue: {}", payload);
-    // Execute background business logic
   }
 }
 ```
 
-### 2. Apache Kafka Producer (`messaging/kafka/`)
+### 2. Apache Kafka Producer
 Powered by `KafkaTemplate<String, Object>` for high-throughput streaming:
 
 ```java title="Kafka Producer Example"
@@ -221,28 +238,21 @@ private KafkaProducerService kafkaProducer;
 kafkaProducer.sendMessage("app.events", "user-123", Map.of("action", "LOGIN", "timestamp", System.currentTimeMillis()));
 ```
 
+### 3. Broker Endpoints & Testing cURL
+
+```bash title="Dispatch Realtime Notification via cURL"
+curl -X POST "http://localhost:8080/api/demo/realtime/notify?userId=12&title=Update&message=Your+order+shipped&type=info"
+```
+
 ---
 
-## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
+## 🛡️ Idempotency Protection (X-Idempotency-Key)
 
-To prevent duplicate mutation processing during client retries, `template-java` provides the servlet filter `IdempotencyFilter` and custom annotation `@RequireIdempotencyKey` implementing the IETF draft standard:
+To prevent duplicate mutation processing during client retries, `@RequireIdempotencyKey` on controller endpoints enforces `X-Idempotency-Key` validation:
+
+### 1. Middleware & Storage Configuration
 
 ```java title="com/example/template/java/order/controller/OrderController.java"
-package com.example.template.java.order.controller;
-
-import com.example.template.java.common.dto.BaseResponse;
-import com.example.template.java.common.idempotency.RequireIdempotencyKey;
-import com.example.template.java.order.dto.OrderRequest;
-import com.example.template.java.order.dto.OrderResponse;
-import com.example.template.java.order.service.OrderService;
-import jakarta.validation.Valid;
-import org.springframework.http.ResponseEntity;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
 @RestController
 @RequestMapping("/api/orders")
 public class OrderController {
@@ -260,7 +270,7 @@ public class OrderController {
 }
 ```
 
-### Idempotency Mechanics in Spring Boot:
+### 2. Lock, Fingerprint & Replay Mechanics
 1. **Header Extraction**: `IdempotencyFilter` reads `Idempotency-Key` or `X-Idempotency-Key`.
 2. **Distributed Redis Storage**: Backed by `RedisIdempotencyStorage` (with `MemoryIdempotencyStorage` fallback) storing responses for 24 hours (`86400s`) with 30-second locks.
 3. **Race Condition Prevention (409 Conflict)**: When an active concurrent request with the same key is in-flight (`status=in_progress`), the filter rejects it with `409 Conflict` (`IDEMPOTENCY_CONFLICT`).
@@ -270,7 +280,37 @@ public class OrderController {
 
 ---
 
-## ⚙️ Configuration Properties (`application.properties`)
+## 📋 Request Validation & Boundaries
+
+Validates incoming DTO payloads using standard Jakarta Bean Validation:
+
+```java title="com/example/template/java/user/dto/UserRequest.java"
+package com.example.template.java.user.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import lombok.Data;
+
+@Data
+public class UserRequest {
+  @NotBlank(message = "Name is required")
+  @Size(min = 2, max = 100, message = "Name must be between 2 and 100 characters")
+  private String name;
+
+  @NotBlank(message = "Email is required")
+  @Email(message = "Email must be valid")
+  private String email;
+
+  @NotBlank(message = "Password is required")
+  @Size(min = 8, message = "Password must be at least 8 characters")
+  private String password;
+}
+```
+
+---
+
+## ⚙️ Environment Variables & Configuration
 
 ```properties title="src/main/resources/application.properties"
 spring.application.name=template-java

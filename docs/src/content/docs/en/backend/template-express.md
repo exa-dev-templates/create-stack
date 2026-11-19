@@ -23,9 +23,30 @@ The `template-express` template is an enterprise-grade REST API starter kit buil
 
 ---
 
-## ⚡ Database Transactions (Pure Parameter Passing `withTransaction`)
+## ⚡ Database Transactions (Pure Parameter Passing)
 
 In compliance with monorepo guidelines (`database-transactions.md`), multi-step database mutations must execute inside atomic transactions. `Database.getInstance().withTransaction` manages connection client lifecycles, issuing `BEGIN`, `COMMIT`, and automatic `ROLLBACK` on unhandled exceptions:
+
+### 1. Read-Only Operations
+
+For data queries, client connections are managed via `withReadOnlyTransaction`:
+
+```typescript title="src/modules/users/service.ts"
+async getUserById (id: string): Promise<User> {
+  const db = Database.getInstance()
+  return await db.withReadOnlyTransaction(async (client) => {
+    const user = await userRepository.findById(id, client)
+    if (!user) {
+      throw new NotFoundError('User not found')
+    }
+    return user
+  })
+}
+```
+
+### 2. Data Mutations & Atomic Rollback
+
+For write operations (`INSERT`, `UPDATE`, `DELETE`), business logic executes inside `withTransaction`:
 
 ```typescript title="src/modules/users/service.ts"
 import { Database } from '../../config/database'
@@ -35,9 +56,6 @@ import { EmailAlreadyExistsError, ValidationError } from '../../pkg/errors'
 import type { CreateUserDTO, User } from './types'
 
 export class UserService {
-  /**
-   * Create a new user (within an atomic database transaction)
-   */
   async createUser (data: CreateUserDTO): Promise<User> {
     const { name, email, password } = data
 
@@ -73,6 +91,8 @@ export class UserService {
 }
 ```
 
+### 3. Repository Layer
+
 At the repository layer, queries are executed directly on the provided `client: PoolClient`:
 
 ```typescript title="src/modules/users/repository.ts"
@@ -101,7 +121,7 @@ class UserRepository extends BaseRepository<User> {
 
 ---
 
-## 📡 Real-time Engine: SSE, WebSocket & Distributed Auto-Bridge
+## 📡 Real-time Engine: SSE, WebSocket & Distributed Bridge
 
 `template-express` provides a unified realtime architecture supporting two key transmission protocols: **Server-Sent Events (SSE)** for unidirectional event streaming and **WebSocket (Socket.IO)** for low-latency bidirectional communication.
 
@@ -130,17 +150,13 @@ eventSource.onmessage = (event) => {
   const payload = JSON.parse(event.data);
   console.log('General Event:', payload);
 };
-eventSource.addEventListener('test', (event) => {
-  const payload = JSON.parse(event.data);
-  console.log('Custom Event [test]:', payload);
-});
 eventSource.onerror = (err) => {
   console.error('SSE Error:', err);
   eventSource.close();
 };
 ```
 
-### 2. WebSocket Service (Socket.IO)
+### 2. Full-Duplex WebSocket
 WebSockets are driven by Socket.IO (`WebSocketService.getInstance()`) and safeguarded by JWT handshake middleware:
 
 ```javascript title="Client Socket.IO Example (Frontend)"
@@ -162,7 +178,7 @@ socket.on("notification", (data) => {
 });
 ```
 
-### 3. Distributed Auto-Bridge (`REALTIME_BRIDGE=redis|rabbitmq`)
+### 3. Distributed Auto-Bridge (Horizontal Scaling)
 To ensure realtime messages reach users connected across disparate pods in a Kubernetes cluster:
 - **Redis Bridge (`REALTIME_BRIDGE=redis`)**: Uses Redis Pub/Sub (`pSubscribe`) for inter-instance event dissemination.
 - **RabbitMQ Bridge (`REALTIME_BRIDGE=rabbitmq`)**: Utilizes topic exchange `realtime` with exclusive per-instance queues and `#` wildcards.
@@ -191,29 +207,16 @@ export function createBridge (): RealtimeBridge {
 | `GET` | `/api/v1/realtime/online/:userId` | Checks whether a user is currently online | Required |
 | `POST` | `/api/v1/realtime/disconnect/:userId` | Forcibly terminates a user's active sockets (Admin) | Required (Admin) |
 
-```bash title="Example: Dispatching a Realtime Notification via cURL"
-curl -X POST http://localhost:5000/api/v1/realtime/notify/123 \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": "order_completed",
-    "data": {
-      "orderId": "ORD-9981",
-      "status": "PAID"
-    }
-  }'
-```
-
 ---
 
 ## 🐰⚡ Dual Message Brokers: RabbitMQ & Apache Kafka
 
 `template-express` comes equipped with production-grade clients for asynchronous event pipelines:
 
-### 1. RabbitMQ Client (`src/config/rabbitmq.ts`)
+### 1. RabbitMQ Producer & Consumer
 Built with `amqplib`, offering automatic connection recovery, channel pooling, and publisher confirms:
 
-```typescript
+```typescript title="src/config/rabbitmq.ts"
 import RabbitMQClient from '../config/rabbitmq'
 
 const rabbit = RabbitMQClient.getInstance()
@@ -224,10 +227,10 @@ await rabbit.publishMessage('orders_queue', {
 })
 ```
 
-### 2. Apache Kafka Producer (`src/config/kafka.ts`)
+### 2. Apache Kafka Producer
 Powered by **KafkaJS** for resilient high-throughput event streaming:
 
-```typescript
+```typescript title="src/config/kafka.ts"
 import KafkaClient from '../config/kafka'
 
 const kafka = KafkaClient.getInstance()
@@ -239,11 +242,25 @@ await kafka.publish('orders-events', [
 ])
 ```
 
+### 3. Broker Endpoints & Testing cURL
+
+```bash title="Dispatch Broadcast Event via cURL"
+curl -X POST http://localhost:5000/api/v1/realtime/broadcast \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event": "global_announcement",
+    "data": { "message": "System update in 10 minutes" }
+  }'
+```
+
 ---
 
-## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
+## 🛡️ Idempotency Protection (X-Idempotency-Key)
 
-To protect critical mutating endpoints (e.g. payment processing, order creation, balance updates) against duplicate executions caused by network retries, `template-express` provides production-ready idempotency middleware in `src/middleware/idempotency.ts` complying with the IETF draft standard:
+To protect mutating endpoints (e.g. payment processing, order creation, balance deductions) against duplicate processing caused by network retries, `template-express` provides production-grade idempotency middleware in `src/middleware/idempotency.ts` adhering to the IETF draft standard:
+
+### 1. Middleware & Storage Configuration
 
 ```typescript title="src/modules/orders/routes.ts"
 import { Router } from 'express'
@@ -267,7 +284,7 @@ router.post(
 export default router
 ```
 
-### Idempotency Mechanics in Express:
+### 2. Lock, Fingerprint & Replay Mechanics
 1. **Header Inspection**: Evaluates `Idempotency-Key` or `X-Idempotency-Key`.
 2. **Atomic Distributed Locking**: Issues `SET idempotency:{userId}:{key} NX EX 30` in Redis. Simultaneous requests with the identical key are rejected with `409 Conflict`.
 3. **Payload Fingerprinting (SHA-256)**: Computes a hash of `userId + method + path + body`. Submitting an existing key with altered data triggers `422 Unprocessable Entity` (`IdempotencyPayloadMismatchError`).
@@ -276,7 +293,7 @@ export default router
 
 ---
 
-## 📋 Zod Validation Boundary & Schemas
+## 📋 Request Validation & Boundaries
 
 Zod schemas enforce structural validity at the gateway before request bodies reach handlers:
 
@@ -296,7 +313,7 @@ export const notifyUserSchema = z.object({
 
 ---
 
-## ⚙️ Environment Variables (`.env`)
+## ⚙️ Environment Variables & Configuration
 
 ```ini title=".env"
 # Server Configuration

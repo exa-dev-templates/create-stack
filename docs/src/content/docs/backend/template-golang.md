@@ -1,6 +1,6 @@
 ---
 title: Golang (Fiber v2) Backend
-description: Panduan arsitektur lengkap template-golang, Clean Architecture, TransactionManager, Real-time SSE & WebSocket, Distributed Auto-Bridge (Redis & RabbitMQ), Dual Message Broker, dan Idempotency
+description: Panduan arsitektur lengkap template-golang, Clean Architecture, TransactionManager, Real-time SSE & WebSocket, Distributed Bridge (Redis & RabbitMQ), Dual Message Broker, dan Idempotency
 ---
 
 Template `template-golang` adalah backend REST API berkinerja tinggi yang ditulis dalam **Go 1.22+** dan framework **Fiber v2** (router berbasis Fasthttp dengan alokasi memori mendekati nol). Template ini dirancang untuk skala enterprise dengan Clean Architecture, penanganan transaksi database tanpa magic context, realtime messaging canggih, dan integrasi multi-broker.
@@ -23,7 +23,7 @@ Template `template-golang` adalah backend REST API berkinerja tinggi yang dituli
 
 ---
 
-## ⚡ Transaksi Database (Pure Parameter Passing & TransactionManager)
+## ⚡ Transaksi Database (Pure Parameter Passing)
 
 Aturan monorepo (`database-transactions.md`) melarang keras penggunaan "magic context" (seperti menyimpan transaksi di `context.WithValue` atau middleware tersembunyi). Di sisi lain, developer tidak perlu menulis ulang boilerplate `BeginTxx / defer tx.Rollback / Commit` di setiap usecase.
 
@@ -49,7 +49,8 @@ sequenceDiagram
     TM-->>S: return nil
 ```
 
-### 1. Operasi Pembacaan / Read-Only (`GetAll`)
+### 1. Operasi Pembacaan / Read-Only
+
 Pada query pembacaan data, service memanfaatkan `WithReadOnlyTransactionCtx`:
 
 ```go title="internal/module/user/service.go"
@@ -72,41 +73,46 @@ func (s *userService) GetAll(ctx context.Context) ([]UserResponse, error) {
 }
 ```
 
-### 2. Operasi Mutasi Data (`Create`)
+### 2. Operasi Mutasi Data & Atomic Rollback
+
 Untuk penulisan data (`INSERT`, `UPDATE`, `DELETE`), alur bisnis dieksekusi di dalam `WithTransactionCtx`. Pointer `tx` dioper secara eksplisit ke setiap method repository:
 
 ```go title="internal/module/user/service.go"
 func (s *userService) Create(ctx context.Context, req *CreateUserRequest) (*UserResponse, error) {
 	var res *UserResponse
 	err := s.tm.WithTransactionCtx(ctx, func(tx *sqlx.Tx) error {
-		// Validasi keberadaan email dalam transaksi
+		// 1. Validasi uniqueness via pointer tx eksplisit
 		exists, err := s.repo.ExistsByEmail(ctx, tx, req.Email)
 		if err != nil {
-			return appErrors.DatabaseError("Failed to check email existence", err)
+			return appErrors.DatabaseError("Gagal memeriksa email", err)
 		}
 		if exists {
-			return appErrors.EmailAlreadyExists()
+			return appErrors.ConflictError("Email sudah terdaftar", nil)
+		}
+
+		// 2. Hash password
+		hashed, err := password.Hash(req.Password)
+		if err != nil {
+			return appErrors.InternalError("Gagal memproses password", err)
 		}
 
 		user := &User{
-			ID:        uuid.New().String(),
-			Name:      req.Name,
-			Email:     req.Email,
-			Role:      "user",
-			IsActive:  true,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			Name:         req.Name,
+			Email:        req.Email,
+			PasswordHash: hashed,
+			Role:         RoleUser,
 		}
 
-		// Oper tx secara eksplisit ke repository
+		// 3. Mutasi data via tx eksplisit
 		if err := s.repo.Create(ctx, tx, user); err != nil {
-			return appErrors.ParseDatabaseError(err)
+			return appErrors.DatabaseError("Gagal membuat user", err)
 		}
 
-		u := user.toResponse()
-		res = &u
-		return nil
+		r := user.toResponse()
+		res = &r
+		return nil // Commit dieksekusi otomatis oleh TransactionManager
 	})
+
 	if err != nil {
 		return nil, err
 	}
@@ -114,90 +120,98 @@ func (s *userService) Create(ctx context.Context, req *CreateUserRequest) (*User
 }
 ```
 
-### 3. Repository Layer (Validasi Transaksi Wajib)
-Setiap method repository memvalidasi keberadaan `tx` dan mengeksekusi query langsung pada objek transaksi tersebut:
+### 3. Layer Repository
+
+Di layer repository, query wajib dieksekusi langsung pada objek `tx`:
 
 ```go title="internal/module/user/repository.go"
 func (r *userRepository) Create(ctx context.Context, tx *sqlx.Tx, user *User) error {
 	if tx == nil {
-		return errors.New("transaction is required")
+		return errors.New("repository method Create requires an active *sqlx.Tx")
 	}
-	query := `INSERT INTO users (id, name, email, phone, role, is_active, created_at, updated_at) 
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-	_, err := tx.ExecContext(ctx, query, user.ID, user.Name, user.Email, user.Phone, user.Role, user.IsActive, user.CreatedAt, user.UpdatedAt)
-	return err
+
+	query := `
+		INSERT INTO users (name, email, password_hash, role, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		RETURNING id, created_at, updated_at`
+
+	return tx.QueryRowContext(ctx, query,
+		user.Name,
+		user.Email,
+		user.PasswordHash,
+		user.Role,
+	).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
 }
 ```
 
 ---
 
-## 📡 Real-time Engine: SSE, WebSocket & Distributed Auto-Bridge
+## 📡 Real-time Engine: SSE, WebSocket & Distributed Bridge
 
-`template-golang` dilengkapi modul real-time kelas produksi (`pkg/realtime`) yang mendukung protokol **Server-Sent Events (SSE)** dan **WebSocket** secara bersamaan atau independen.
+Template ini dilengkapi **Realtime Hub terpusat** (`internal/module/realtime/hub.go`) yang mengelola koneksi client, channel subscription, dan distribusi event.
 
 ```mermaid
 flowchart TD
-    Client1[Client A (Browser SSE)] -->|GET /realtime/sse/events| Pod1[Go Pod 1 / Replica 1]
-    Client2[Client B (Mobile WS)] -->|GET /realtime/ws/connect| Pod2[Go Pod 2 / Replica 2]
+    ClientSSE["Client 1 (SSE EventSource)"] -->|GET /api/v1/sse| PodA["Pod Fiber A"]
+    ClientWS["Client 2 (WebSocket)"] -->|ws:// /api/v1/ws| PodB["Pod Fiber B"]
     
-    subgraph Multi_Pod_Sync [Distributed Auto-Bridge (REALTIME_BRIDGE)]
-        Pod1 <-->|Publish / Subscribe| Bridge[(Redis Pub/Sub atau RabbitMQ Fanout)]
-        Bridge <-->|Publish / Subscribe| Pod2
-    end
+    Publisher["REST API / Background Worker"] -->|Hub.Broadcast(event)| PodA
+    PodA -->|Publish Event| Bridge{"Distributed Auto-Bridge\n(REALTIME_BRIDGE)"}
     
-    Pod1 -->|Local Fanout| Client1
-    Pod2 -->|Local Fanout| Client2
+    Bridge -->|Redis Pub/Sub| PodA
+    Bridge -->|Redis Pub/Sub| PodB
+    
+    PodA -->|Push stream| ClientSSE
+    PodB -->|Push frame| ClientWS
 ```
 
 ### 1. Server-Sent Events (SSE)
-Implementasi SSE di `internal/module/sse.go` dirancang khusus agar aman dari *context object pool recycling* Fiber:
-- Mengambil channel pembatalan koneksi `notify := c.Context().Done()` **sebelum** fungsi handler me-return.
-- Menggunakan `fasthttp.StreamWriter` dengan header `X-Accel-Buffering: no` untuk mencegah buffering oleh reverse proxy seperti Nginx atau Traefik.
-- Mendukung dynamic query parameter: `?client_id=<uuid>&channels=orders,notifications`.
+- Endpoint: `GET /api/v1/sse?channel=news&userId=123`
+- Headers yang dikirim otomatis:
+  ```http
+  Content-Type: text/event-stream
+  Cache-Control: no-cache
+  Connection: keep-alive
+  Transfer-Encoding: chunked
+  ```
+- **Lifecycle Streaming**: Menggunakan `fasthttp.RequestCtx` dengan reader loop non-blocking dan pendeteksian diskoneksi melalui `c.Context().Done()`.
 
-**Endpoint SSE:**
-* `GET /api/v1/realtime/sse/events` - Endpoint streaming SSE untuk client.
-* `GET /api/v1/realtime/sse/subscribe?channel=room1` - Menambahkan langganan channel ke client yang sedang terhubung.
-* `POST /api/v1/realtime/sse/broadcast` - Mengirim pesan ke seluruh client atau channel tertentu.
-* `POST /api/v1/realtime/sse/send` - Mengirim pesan langsung ke `user_id` spesifik.
-* `GET /api/v1/realtime/sse/stats` - Statistik jumlah koneksi aktif dan daftar channel.
+```javascript title="Contoh Client SSE (Browser)"
+const sse = new EventSource("http://localhost:8080/api/v1/sse?channel=orders");
+sse.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    console.log("Pesan baru:", data);
+};
+```
 
 ### 2. Full-Duplex WebSocket
-Implementasi WebSocket di `internal/module/ws.go` menggunakan `@gofiber/websocket/v2`:
-- Dilengkapi mekanisme read/write pump independen.
-- Ping/Pong heartbeat otomatis dengan timeout 60 detik untuk mendeteksi dead connection.
-- Integrasi otomatis unregister saat koneksi terputus (*graceful cleanup*).
+- Endpoint: `GET /api/v1/ws?channel=room1&userId=123`
+- Menggunakan `github.com/gofiber/contrib/websocket` dengan dua goroutine terisolasi:
+  1. **Read Pump**: Membaca pesan masuk dari client, memproses heartbeat `ping/pong`, dan mem-forward pesan ke Hub.
+  2. **Write Pump**: Mengirim frame data dari channel Go ke client dengan batas waktu (*write deadline*).
 
-**Endpoint WebSocket:**
-* `GET /api/v1/realtime/ws/connect?client_id=<id>&channels=chat,alerts`
-* `GET /api/v1/realtime/ws/stats`
+### 3. Distributed Auto-Bridge (Horizontal Scaling)
+Ketika aplikasi dideploy dengan banyak pod di Kubernetes, client yang terhubung di Pod B harus tetap menerima pesan saat user lain mengirim pesan ke Pod A.
+- Dikonfigurasi melalui environment variable `REALTIME_BRIDGE=redis` atau `rabbitmq` atau `both`.
+- **Anti-Echo / Echo Prevention**: Setiap pesan membawa `SenderID` unik instans server agar pod pengirim tidak menduplikasi pesan ke subscriber lokalnya.
+- **Graceful Fallback**: Jika Redis atau RabbitMQ terputus, sistem secara otomatis beralih ke mode standalone in-memory broadcast.
 
-### 3. Distributed Auto-Bridge (Horizontal Pod Scaling)
-Pada lingkungan Kubernetes atau microservices multi-replica, client yang terkoneksi ke **Pod 1** biasanya tidak dapat menerima pesan yang di-broadcast oleh **Pod 2** jika hanya menggunakan memori lokal.
+### 4. Daftar Endpoint Realtime
 
-Modul `pkg/realtime/bridge.go` mengatasi masalah ini secara transparan lewat **Auto-Bridge**:
-
-1. **Redis Pub/Sub Bridge (`REALTIME_BRIDGE=redis`)**:
-   - Mempublikasikan pesan ke Redis dengan pola channel `realtime:channel:<channel_name>` atau `realtime:broadcast`.
-   - Seluruh replica mendengarkan pola `realtime:*` dan meneruskannya ke subscriber lokal masing-masing.
-2. **RabbitMQ Fanout Bridge (`REALTIME_BRIDGE=rabbitmq`)**:
-   - Menggunakan satu exchange tipe **fanout** bernama `realtime.events`.
-   - Setiap pod yang menyala membuat antrean eksklusif sementara (`realtime.<uuid>`) yang otomatis dihapus saat pod mati (*auto-delete*).
-   - Seluruh instance menerima copy dari setiap pesan tanpa terjadi kompetisi antrean (*no competing consumers*).
-3. **Dual Bridge (`REALTIME_BRIDGE=both`)**:
-   - Menerbitkan event ke Redis dan RabbitMQ secara paralel untuk arsitektur hybrid.
-4. **Proteksi Loopback / Anti-Echo**:
-   - Setiap pesan diberi stempel ID pod pengirim (`msg.ID = h.id`). Ketika pesan kembali melalui bridge, pod pengirim mendeteksinya dan membuang duplikat lokal (`if message.ID == h.id continue`).
-5. **Zero-Downtime Fallback**:
-   - Jika broker atau Redis mati atau dimatikan via flag (`REDIS_ENABLED=false`), hub otomatis turun (*fallback*) ke mode single-instance (in-memory broadcast saja) tanpa menyebabkan aplikasi crash.
+| Method | Endpoint | Deskripsi | Autentikasi |
+|---|---|---|---|
+| `GET` | `/api/v1/sse` | Membuka stream Server-Sent Events (`?channel=..&userId=..`) | Opsional |
+| `WS` | `/api/v1/ws` | Membuka koneksi WebSocket dua arah | Opsional |
+| `POST` | `/api/v1/realtime/broadcast` | Broadcast pesan ke seluruh subscriber | Wajib (Bearer) |
+| `POST` | `/api/v1/realtime/channel/:channel` | Mengirim pesan ke channel tertentu | Wajib (Bearer) |
 
 ---
 
 ## 🐰⚡ Dual Message Broker: RabbitMQ & Apache Kafka
 
-Template menyediakan dua teknologi message broker kelas dunia yang siap pakai out-of-the-box.
+Template menyediakan dua teknologi message broker enterprise siap pakai:
 
-### 1. RabbitMQ (AMQP 0.9.1)
+### 1. RabbitMQ Producer & Consumer
 - Dikelola oleh modul `pkg/queue/rabbitmq.go`.
 - Mendukung deklarasi Queue, Exchange (`direct`, `topic`, `fanout`), dan Binding.
 - Auto-reconnect dan penanganan channel pool yang thread-safe.
@@ -208,13 +222,14 @@ broker, _ := queue.NewRabbitMQ(&cfg.RabbitMQ, logger)
 _ = broker.Publish(ctx, "orders.exchange", "order.created", payloadBytes)
 ```
 
-### 2. Apache Kafka Native Producer
+### 2. Apache Kafka Producer
 - Dikelola oleh modul `pkg/queue/kafka.go` menggunakan pustaka `segmentio/kafka-go`.
 - Menggunakan `LeastBytes` partition balancing dan batch timeout untuk performa throughput maksimal.
 - Dilengkapi TCP connection health check mandiri ke broker.
 
-**Endpoint Pengujian Kafka Terpasang:**
-```bash title="Kirim Pesan ke Kafka"
+### 3. Daftar Endpoint & Testing cURL
+
+```bash title="Kirim Pesan ke Apache Kafka"
 curl -X POST http://localhost:8080/api/v1/kafka-send \
   -H "Content-Type: application/json" \
   -d '{
@@ -226,19 +241,35 @@ curl -X POST http://localhost:8080/api/v1/kafka-send \
 
 ---
 
-## 🛡️ Idempotency Protection Layer
+## 🛡️ Proteksi Idempotency (X-Idempotency-Key)
 
-Untuk endpoint mutasi krusial seperti pembayaran atau pembuatan resource (`POST` / `PATCH`), template menyertakan middleware idempotensi di `pkg/idempotency`.
+Untuk endpoint mutasi krusial seperti pembayaran atau pembuatan resource (`POST`, `PATCH`), template menyertakan middleware idempotensi IETF draft di `pkg/idempotency`.
 
-- **Cara Pakai**: Client menyertakan header `X-Idempotency-Key: <unique-uuid>`.
-- **Backend Storage**:
-  - Jika Redis aktif (`REDIS_ENABLED=true`), hasil response disimpan di Redis dengan TTL terkonfigurasi (`IDEMPOTENCY_LIFETIME_HOURS`).
-  - Jika Redis nonaktif, middleware otomatis menggunakan *thread-safe in-memory storage* (`sync.Map`) sebagai fallback.
-- Jika request dengan key yang sama dikirim ulang sebelum proses selesai, server mengembalikan status `409 Conflict`. Jika proses sudah selesai, server langsung mengembalikan hasil response cache sebelumnya tanpa mengeksekusi ulang usecase/database.
+### 1. Konfigurasi Middleware & Storage
+
+```go title="internal/app/http.go"
+import "golang/pkg/idempotency"
+
+// Pasang middleware idempotency pada rute mutasi sensitif
+orders := api.Group("/orders", idempotency.New(idempotency.Config{
+    Storage:     idempotency.NewRedisStorage(redisClient),
+    Lifetime:    24 * time.Hour,
+    LockTimeout: 30 * time.Second,
+    Required:    true,
+}))
+orders.Post("/", orderHandler.CreateOrder)
+```
+
+### 2. Mekanisme Kunci, Fingerprint & Replay
+1. **Header**: Client menyertakan header `Idempotency-Key` atau `X-Idempotency-Key`.
+2. **Atomic Lock**: Status `in_progress` dikunci di Redis selama 30 detik. Request paralel yang bersamaan akan langsung ditolak dengan `409 Conflict`.
+3. **Payload Fingerprint**: Hash SHA-256 diverifikasi terhadap path, method, dan request body. Jika payload berbeda, server mengembalikan `422 Unprocessable Entity`.
+4. **Instant Replay**: Jika request berhasil sebelumnya, cached response dikembalikan seketika dengan header `Idempotent-Replayed: true`.
+5. **Safety Unlock**: Jika terjadi kegagalan server (5xx), lock otomatis dihapus dari Redis.
 
 ---
 
-## 📋 Unified Request Body Binder (`pkg/validation`)
+## 📋 Validasi Input Request & Boundaries
 
 Semua endpoint POST/PUT memakai binder `pkg/validation` yang menerima satu DTO untuk **tiga bentuk body sekaligus**:
 1. `application/json`
@@ -264,7 +295,7 @@ if err := validation.BindAndValidate(c, req); err != nil {
 
 ---
 
-## ⚙️ Variabel Lingkungan (`.env`)
+## ⚙️ Variabel Lingkungan & Konfigurasi
 
 | Variabel | Default | Keterangan |
 |---|---|---|

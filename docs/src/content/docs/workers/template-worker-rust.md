@@ -22,24 +22,13 @@ Template `template-worker-rust` adalah worker antrean berkinerja mutlak yang dit
 
 ## ⚡ Implementasi Consumer & Handlers
 
-Orkestrasi loop konsumsi RabbitMQ dan sinyal shutdown di `src/consumer/worker.rs`:
+Berikut adalah arsitektur consumer nyata yang ada pada template Rust:
+
+### 1. RabbitMQ Consumer Loop
+
+Loop konsumsi RabbitMQ dengan manual Ack/Nack di `src/consumer/worker.rs`:
 
 ```rust title="src/consumer/worker.rs"
-use futures_util::StreamExt;
-use lapin::{
-    message::Delivery,
-    options::{BasicAckOptions, BasicConsumeOptions, BasicNackOptions},
-    types::FieldTable,
-    Channel,
-};
-use tokio::sync::broadcast;
-use tracing::{error, info, warn};
-
-use crate::{
-    config::WorkerConfig,
-    consumer::task::{process_task, TaskMessage},
-};
-
 pub async fn start_consumer(
     channel: Channel,
     config: WorkerConfig,
@@ -96,7 +85,9 @@ async fn handle_delivery(delivery: &Delivery) {
 }
 ```
 
-Dan loop konsumsi Kafka di `src/consumer/kafka_worker.rs`:
+### 2. Apache Kafka Consumer Loop
+
+Loop konsumsi RsKafka di `src/consumer/kafka_worker.rs`:
 
 ```rust title="src/consumer/kafka_worker.rs"
 pub async fn start_kafka_consumer(
@@ -134,9 +125,36 @@ pub async fn start_kafka_consumer(
 }
 ```
 
+### 3. Sinyal OS & Graceful Shutdown
+
+Menggunakan sinyal OS Tokio (`tokio::signal::ctrl_c()`) dan broadcast channel untuk mematikan seluruh task secara bersamaan tanpa memutus proses yang sedang berjalan:
+
+```rust title="src/main.rs"
+tokio::select! {
+    _ = tokio::signal::ctrl_c() => {
+        info!("Termination signal intercepted. Broadcasting shutdown to worker tasks...");
+        let _ = shutdown_tx.send(());
+    }
+}
+```
+
 ---
 
-## ⚙️ Variabel Lingkungan (`.env`)
+## 📦 Skema Pesan Standar (Message Payload)
+
+```rust title="src/consumer/task.rs"
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TaskMessage {
+    pub id: String,
+    pub task_type: String,
+    pub payload: serde_json::Value,
+    pub created_at: String,
+}
+```
+
+---
+
+## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```ini title=".env"
 # Driver Pilihan: rabbitmq atau kafka

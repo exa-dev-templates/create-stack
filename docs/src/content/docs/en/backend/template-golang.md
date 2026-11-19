@@ -1,33 +1,31 @@
 ---
 title: Golang (Fiber v2) Backend
-description: Comprehensive architecture guide for template-golang, Clean Architecture, TransactionManager, Real-time SSE & WebSocket, Distributed Auto-Bridge (Redis & RabbitMQ), Dual Message Broker, and Idempotency
+description: Comprehensive architecture guide for template-golang, Clean Architecture, TransactionManager, Real-time SSE & WebSocket, Distributed Bridge, Dual Brokers, and Idempotency
 ---
 
-The `template-golang` template is an enterprise-grade, high-performance REST API backend built with **Go 1.22+** and the **Fiber v2** web framework (Fasthttp-powered router with near-zero memory allocation). It is engineered for enterprise scalability with strict Clean Architecture, safe database transactions without magic context, advanced real-time communication, and multi-broker event streaming.
-
----
-
-## ✨ Key Architectural Features
-
-- **Fiber v2 Framework**: Fastest HTTP engine in the Go ecosystem with a zero-memory-allocation pipeline.
-- **Pure Parameter-Passing Transactions**: Database transactions must be passed explicitly via pointer `tx *sqlx.Tx`. Storing or resolving transactions via `context.Context` is strictly forbidden.
-- **Database TransactionManager**: Safely manages ACID transaction lifecycles (automatic panic recovery, context cancellation, rollback, and commit).
-- **Real-time Engine (SSE & WebSocket)**: Server-Sent Events streaming and full-duplex WebSocket with dynamic channel subscriptions and user-targeted messaging.
-- **Distributed Realtime Auto-Bridge**: Automatically synchronizes real-time events across multiple Kubernetes pods or server replicas using **Redis Pub/Sub** or **RabbitMQ Fanout Exchanges** without losing messages.
-- **Dual Message Broker**: Full support for **RabbitMQ (AMQP 0.9.1)** and an **Apache Kafka Native Producer** (`segmentio/kafka-go`) with built-in `/api/v1/kafka-send` test endpoint.
-- **Idempotency Protection Layer**: Built-in middleware protecting mutating endpoints (`POST` / `PATCH`) via `X-Idempotency-Key`, backed by Redis or an in-memory fallback.
-- **Unified Request Body Binder**: The `pkg/validation` module binds and validates a single DTO across 3 formats simultaneously: `application/json`, `application/x-www-form-urlencoded`, and `multipart/form-data` (including file uploads).
-- **Structured JSON Logging (slog)**: Standard library `log/slog` logging module with correlation ID tracking (`X-Request-ID`) and automatic sensitive data masking. Raw `fmt.Println` is strictly prohibited.
-- **Database Migrations**: Version-controlled SQL migrations using `golang-migrate/migrate` with automated boot execution (`AUTO_MIGRATE=true`).
-- **Interactive OpenAPI / Swagger**: Built-in Swagger UI available at `/docs` with raw OpenAPI specification at `/docs/openapi.json`.
+The `template-golang` template is a high-performance REST API backend written in **Go 1.22+** and the **Fiber v2** framework (built on Fasthttp with near-zero memory allocations). Designed for enterprise-scale workloads, it combines Clean Architecture, explicit database transaction management without context magic, advanced realtime messaging, and dual message brokers.
 
 ---
 
-## ⚡ Database Transactions (Pure Parameter Passing & TransactionManager)
+## ✨ Core Architectural Features
 
-Monorepo rules (`database-transactions.md`) strictly forbid "magic context" transactions (e.g. `context.WithValue` or hidden middleware transactions). At the same time, developers do not need to repeat boilerplate `BeginTxx / defer tx.Rollback / Commit` in every service method.
+- **Fiber v2 Framework**: Blazing fast HTTP router on the Fasthttp zero-allocation pipeline.
+- **Pure Parameter-Passing Transactions**: Explicit database transaction passing via `tx *sqlx.Tx`. Hiding transactions in `context.Context` is strictly forbidden.
+- **Database TransactionManager**: Safely manages ACID lifecycles, automatic panics recovery, context cancellation, rollback, and commits.
+- **Real-time Hub (SSE & WebSocket)**: Server-Sent Events streaming and full-duplex WebSocket connections with dynamic channel subscriptions and user-targeted delivery.
+- **Distributed Realtime Auto-Bridge**: Interconnects Kubernetes pods automatically via **Redis Pub/Sub** or **RabbitMQ Fanout Exchanges** to synchronize events across cluster replicas.
+- **Dual Message Brokers**: Out-of-the-box integrations for **RabbitMQ (AMQP 0.9.1)** and **Apache Kafka Producer** (`segmentio/kafka-go`) with built-in testing endpoint `/api/v1/kafka-send`.
+- **Idempotency Protection Layer**: IETF draft-compliant `X-Idempotency-Key` middleware backed by Redis or in-memory fallback.
+- **Unified Request Body Binder**: Custom `pkg/validation` binder handling JSON, urlencoded form data, and multipart file uploads into a single DTO.
+- **Structured JSON Logging (slog)**: Standard library `log/slog` logging with correlation IDs (`X-Request-ID`) and automated credential masking. Raw `fmt.Println` is forbidden.
+- **Database Migrations**: Version-controlled migrations powered by `golang-migrate/migrate` with automatic execution at startup (`AUTO_MIGRATE=true`).
+- **Interactive OpenAPI / Swagger**: Built-in Swagger UI at `/docs` and raw spec at `/docs/openapi.json`.
 
-Instead, `database.TransactionManager` (`s.tm`) provides safe, idiomatic orchestration:
+---
+
+## ⚡ Database Transactions (Pure Parameter Passing)
+
+Monorepo rules (`database-transactions.md`) prohibit hiding transactions in context values. Instead, `database.TransactionManager` (`s.tm`) provides declarative safety:
 
 ```mermaid
 sequenceDiagram
@@ -49,15 +47,16 @@ sequenceDiagram
     TM-->>S: return nil
 ```
 
-### 1. Read-Only Operations (`GetAll`)
-For data query operations, the service uses `WithReadOnlyTransactionCtx`:
+### 1. Read-Only Operations
+
+For queries, the service utilizes `WithReadOnlyTransactionCtx`:
 
 ```go title="internal/module/user/service.go"
 func (s *userService) GetAll(ctx context.Context) ([]UserResponse, error) {
 	var users []User
 	err := s.tm.WithReadOnlyTransactionCtx(ctx, func(tx *sqlx.Tx) error {
 		var err error
-		users, err = s.repo.GetAll(ctx, tx) // tx is explicitly forwarded
+		users, err = s.repo.GetAll(ctx, tx) // tx passed explicitly
 		return err
 	})
 	if err != nil {
@@ -72,41 +71,46 @@ func (s *userService) GetAll(ctx context.Context) ([]UserResponse, error) {
 }
 ```
 
-### 2. Mutation Operations (`Create`)
-For write operations (`INSERT`, `UPDATE`, `DELETE`), business logic is wrapped in `WithTransactionCtx`. The `tx` pointer is explicitly forwarded to each repository method:
+### 2. Data Mutations & Atomic Rollback
+
+For write operations (`INSERT`, `UPDATE`, `DELETE`), business logic runs inside `WithTransactionCtx`. The `tx` pointer is explicitly passed to repository methods:
 
 ```go title="internal/module/user/service.go"
 func (s *userService) Create(ctx context.Context, req *CreateUserRequest) (*UserResponse, error) {
 	var res *UserResponse
 	err := s.tm.WithTransactionCtx(ctx, func(tx *sqlx.Tx) error {
-		// Validate email uniqueness inside the transaction
+		// 1. Check uniqueness using explicit tx
 		exists, err := s.repo.ExistsByEmail(ctx, tx, req.Email)
 		if err != nil {
-			return appErrors.DatabaseError("Failed to check email existence", err)
+			return appErrors.DatabaseError("Failed to check email", err)
 		}
 		if exists {
-			return appErrors.EmailAlreadyExists()
+			return appErrors.ConflictError("Email already registered", nil)
+		}
+
+		// 2. Hash password
+		hashed, err := password.Hash(req.Password)
+		if err != nil {
+			return appErrors.InternalError("Failed to hash password", err)
 		}
 
 		user := &User{
-			ID:        uuid.New().String(),
-			Name:      req.Name,
-			Email:     req.Email,
-			Role:      "user",
-			IsActive:  true,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			Name:         req.Name,
+			Email:        req.Email,
+			PasswordHash: hashed,
+			Role:         RoleUser,
 		}
 
-		// Explicitly pass tx to repository
+		// 3. Mutate data via explicit tx
 		if err := s.repo.Create(ctx, tx, user); err != nil {
-			return appErrors.ParseDatabaseError(err)
+			return appErrors.DatabaseError("Failed to create user", err)
 		}
 
-		u := user.toResponse()
-		res = &u
-		return nil
+		r := user.toResponse()
+		res = &r
+		return nil // Auto-committed by TransactionManager
 	})
+
 	if err != nil {
 		return nil, err
 	}
@@ -114,107 +118,115 @@ func (s *userService) Create(ctx context.Context, req *CreateUserRequest) (*User
 }
 ```
 
-### 3. Repository Layer (Enforcing Mandatory Transaction)
-Every repository method validates that `tx` is non-nil and runs queries directly on the transaction:
+### 3. Repository Layer
+
+At the repository layer, queries execute directly on `tx`:
 
 ```go title="internal/module/user/repository.go"
 func (r *userRepository) Create(ctx context.Context, tx *sqlx.Tx, user *User) error {
 	if tx == nil {
-		return errors.New("transaction is required")
+		return errors.New("repository method Create requires an active *sqlx.Tx")
 	}
-	query := `INSERT INTO users (id, name, email, phone, role, is_active, created_at, updated_at) 
-	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-	_, err := tx.ExecContext(ctx, query, user.ID, user.Name, user.Email, user.Phone, user.Role, user.IsActive, user.CreatedAt, user.UpdatedAt)
-	return err
+
+	query := `
+		INSERT INTO users (name, email, password_hash, role, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		RETURNING id, created_at, updated_at`
+
+	return tx.QueryRowContext(ctx, query,
+		user.Name,
+		user.Email,
+		user.PasswordHash,
+		user.Role,
+	).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
 }
 ```
 
 ---
 
-## 📡 Real-time Engine: SSE, WebSocket & Distributed Auto-Bridge
+## 📡 Real-time Engine: SSE, WebSocket & Distributed Bridge
 
-The `template-golang` includes a production-grade real-time system (`pkg/realtime`) supporting both **Server-Sent Events (SSE)** and **WebSocket** protocols.
+The centralized **Realtime Hub** (`internal/module/realtime/hub.go`) orchestrates client connections, dynamic channels, and cross-pod fanout.
 
 ```mermaid
 flowchart TD
-    Client1[Client A (Browser SSE)] -->|GET /realtime/sse/events| Pod1[Go Pod 1 / Replica 1]
-    Client2[Client B (Mobile WS)] -->|GET /realtime/ws/connect| Pod2[Go Pod 2 / Replica 2]
+    ClientSSE["Client 1 (SSE EventSource)"] -->|GET /api/v1/sse| PodA["Pod Fiber A"]
+    ClientWS["Client 2 (WebSocket)"] -->|ws:// /api/v1/ws| PodB["Pod Fiber B"]
     
-    subgraph Multi_Pod_Sync [Distributed Auto-Bridge (REALTIME_BRIDGE)]
-        Pod1 <-->|Publish / Subscribe| Bridge[(Redis Pub/Sub or RabbitMQ Fanout)]
-        Bridge <-->|Publish / Subscribe| Pod2
-    end
+    Publisher["REST API / Background Worker"] -->|Hub.Broadcast(event)| PodA
+    PodA -->|Publish Event| Bridge{"Distributed Auto-Bridge\n(REALTIME_BRIDGE)"}
     
-    Pod1 -->|Local Fanout| Client1
-    Pod2 -->|Local Fanout| Client2
+    Bridge -->|Redis Pub/Sub| PodA
+    Bridge -->|Redis Pub/Sub| PodB
+    
+    PodA -->|Push stream| ClientSSE
+    PodB -->|Push frame| ClientWS
 ```
 
 ### 1. Server-Sent Events (SSE)
-The SSE implementation in `internal/module/sse.go` is designed to be immune to Fiber's context pool recycling:
-- Captures cancellation channel `notify := c.Context().Done()` **before** the handler function returns.
-- Utilizes `fasthttp.StreamWriter` with `X-Accel-Buffering: no` header to prevent reverse proxy buffering (e.g. Nginx, Traefik, Cloudflare).
-- Supports dynamic query parameters: `?client_id=<uuid>&channels=orders,notifications`.
+- Endpoint: `GET /api/v1/sse?channel=news&userId=123`
+- Headers:
+  ```http
+  Content-Type: text/event-stream
+  Cache-Control: no-cache
+  Connection: keep-alive
+  Transfer-Encoding: chunked
+  ```
+- **Lifecycle Streaming**: Uses `fasthttp.RequestCtx` non-blocking streaming with disconnect detection via `c.Context().Done()`.
 
-**Available SSE Endpoints:**
-* `GET /api/v1/realtime/sse/events` - SSE streaming endpoint for clients.
-* `GET /api/v1/realtime/sse/subscribe?channel=room1` - Subscribes an active client to a new channel.
-* `POST /api/v1/realtime/sse/broadcast` - Broadcasts an event to all clients or a specific channel.
-* `POST /api/v1/realtime/sse/send` - Sends an event directly to a targeted `user_id`.
-* `GET /api/v1/realtime/sse/stats` - Connection count and active channel metrics.
+```javascript title="Client SSE Example (Browser)"
+const sse = new EventSource("http://localhost:8080/api/v1/sse?channel=orders");
+sse.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    console.log("New event:", data);
+};
+```
 
 ### 2. Full-Duplex WebSocket
-WebSocket implementation in `internal/module/ws.go` uses `@gofiber/websocket/v2`:
-- Independent read and write pump goroutines.
-- Ping/Pong heartbeat with 60-second timeouts to prune dead connections.
-- Automatic unregistration on disconnection (*graceful cleanup*).
+- Endpoint: `GET /api/v1/ws?channel=room1&userId=123`
+- Powered by `github.com/gofiber/contrib/websocket` with decoupled pump goroutines:
+  1. **Read Pump**: Receives frames from client, evaluates `ping/pong` heartbeats, forwards to Hub.
+  2. **Write Pump**: Dispatches queued frames to the socket with write deadlines.
 
-**Available WebSocket Endpoints:**
-* `GET /api/v1/realtime/ws/connect?client_id=<id>&channels=chat,alerts`
-* `GET /api/v1/realtime/ws/stats`
+### 3. Distributed Auto-Bridge (Horizontal Scaling)
+Ensures events published on one pod reach clients connected to separate pods in Kubernetes:
+- Configured via `REALTIME_BRIDGE=redis` or `rabbitmq` or `both`.
+- **Anti-Echo Mechanism**: Messages contain a unique `SenderID` to prevent pods from echoing distributed messages back to their own local clients.
+- **Graceful Fallback**: Automatically degrades to standalone in-memory broadcasting if external brokers disconnect.
 
-### 3. Distributed Auto-Bridge (Horizontal Pod Scaling)
-In a multi-replica Kubernetes cluster, a client connected to **Pod 1** cannot receive messages broadcast by **Pod 2** if only in-memory hubs are used.
+### 4. Realtime API Endpoints
 
-The `pkg/realtime/bridge.go` module solves this transparently:
-
-1. **Redis Pub/Sub Bridge (`REALTIME_BRIDGE=redis`)**:
-   - Publishes messages to Redis channels using `realtime:channel:<channel_name>` or `realtime:broadcast`.
-   - All replicas listen to `realtime:*` and relay messages to their local connected clients.
-2. **RabbitMQ Fanout Bridge (`REALTIME_BRIDGE=rabbitmq`)**:
-   - Uses a single **fanout exchange** named `realtime.events`.
-   - Each pod declares a temporary, exclusive auto-delete queue (`realtime.<uuid>`) bound to this exchange.
-   - Every pod replica receives a full copy of every event with zero competing-consumer conflicts.
-3. **Dual Bridge (`REALTIME_BRIDGE=both`)**:
-   - Publishes to both Redis and RabbitMQ simultaneously for hybrid network topologies.
-4. **Loopback & Self-Echo Prevention**:
-   - Every message is stamped with the publishing pod ID (`msg.ID = h.id`). When a message loops back from the bridge, the originating pod drops it locally to prevent duplicate delivery.
-5. **Zero-Downtime Fallback**:
-   - If Redis or RabbitMQ becomes unavailable, the hub automatically degrades to local single-instance mode without crashing the service.
+| Method | Endpoint | Description | Authentication |
+|---|---|---|---|
+| `GET` | `/api/v1/sse` | Subscribes to Server-Sent Events stream (`?channel=..&userId=..`) | Optional |
+| `WS` | `/api/v1/ws` | Full-duplex WebSocket connection | Optional |
+| `POST` | `/api/v1/realtime/broadcast` | Broadcast message to all active subscribers | Required (Bearer) |
+| `POST` | `/api/v1/realtime/channel/:channel` | Send message to a specific room channel | Required (Bearer) |
 
 ---
 
-## 🐰⚡ Dual Message Broker: RabbitMQ & Apache Kafka
+## 🐰⚡ Dual Message Brokers: RabbitMQ & Apache Kafka
 
-The template provides two enterprise message streaming backends ready for production.
+The template integrates two enterprise brokers out-of-the-box:
 
-### 1. RabbitMQ (AMQP 0.9.1)
+### 1. RabbitMQ Producer & Consumer
 - Managed by `pkg/queue/rabbitmq.go`.
-- Full queue and exchange declaration (`direct`, `topic`, `fanout`) and queue binding.
-- Thread-safe connection and channel pooling with auto-reconnection.
+- Supports queues, exchanges (`direct`, `topic`, `fanout`), and binding configurations.
+- Thread-safe channel pooling and auto-reconnection.
 
 ```go
-// Example publishing a message to RabbitMQ
 broker, _ := queue.NewRabbitMQ(&cfg.RabbitMQ, logger)
 _ = broker.Publish(ctx, "orders.exchange", "order.created", payloadBytes)
 ```
 
-### 2. Apache Kafka Native Producer
-- Managed by `pkg/queue/kafka.go` powered by `segmentio/kafka-go`.
-- Configured with `LeastBytes` partition balancing and batch timeouts for maximum throughput.
-- Integrated TCP health check for broker connectivity monitoring.
+### 2. Apache Kafka Producer
+- Managed by `pkg/queue/kafka.go` utilizing `segmentio/kafka-go`.
+- Partition balancing with `LeastBytes` and batch timeouts for peak throughput.
+- Independent TCP broker health checking.
 
-**Built-in Kafka Send Endpoint:**
-```bash title="Send Message to Kafka"
+### 3. Broker Endpoints & Testing cURL
+
+```bash title="Send Message to Apache Kafka"
 curl -X POST http://localhost:8080/api/v1/kafka-send \
   -H "Content-Type: application/json" \
   -d '{
@@ -226,21 +238,36 @@ curl -X POST http://localhost:8080/api/v1/kafka-send \
 
 ---
 
-## 🛡️ Idempotency Protection Layer
+## 🛡️ Idempotency Protection (X-Idempotency-Key)
 
-For critical mutating endpoints (e.g. payment processing, order creation via `POST` or `PATCH`), the template includes idempotency middleware in `pkg/idempotency`.
+For critical mutating endpoints (e.g. payments or resource creation), `pkg/idempotency` implements the IETF draft standard.
 
-- **Usage**: Clients include the header `X-Idempotency-Key: <unique-uuid>`.
-- **Storage**:
-  - If Redis is enabled (`REDIS_ENABLED=true`), responses are stored in Redis with a configurable TTL (`IDEMPOTENCY_LIFETIME_HOURS`).
-  - If Redis is disabled, the middleware automatically falls back to thread-safe in-memory storage (`sync.Map`).
-- If a duplicate request with the same key arrives while the previous request is in-flight, it returns `409 Conflict`. Once complete, the cached response is served immediately without re-executing business logic.
+### 1. Middleware & Storage Configuration
+
+```go title="internal/app/http.go"
+import "golang/pkg/idempotency"
+
+orders := api.Group("/orders", idempotency.New(idempotency.Config{
+    Storage:     idempotency.NewRedisStorage(redisClient),
+    Lifetime:    24 * time.Hour,
+    LockTimeout: 30 * time.Second,
+    Required:    true,
+}))
+orders.Post("/", orderHandler.CreateOrder)
+```
+
+### 2. Lock, Fingerprint & Replay Mechanics
+1. **Header Evaluation**: Reads `Idempotency-Key` or `X-Idempotency-Key`.
+2. **Atomic Lock**: Locks `in_progress` status in Redis for 30 seconds. Simultaneous parallel requests receive `409 Conflict`.
+3. **Payload Fingerprint**: Computes SHA-256 of path, method, and body. Mismatched payloads return `422 Unprocessable Entity`.
+4. **Instant Replay**: Completed entries replay cached status code, headers, and body with `Idempotent-Replayed: true`.
+5. **Safety Unlock**: Unlocks on 5xx server errors, allowing clean retries.
 
 ---
 
-## 📋 Unified Request Body Binder (`pkg/validation`)
+## 📋 Request Validation & Boundaries
 
-All POST/PUT endpoints utilize `pkg/validation`, binding and validating a single DTO across **three formats at once**:
+Endpoint requests use `pkg/validation` to bind and validate three payload formats into a single DTO:
 1. `application/json`
 2. `application/x-www-form-urlencoded`
 3. `multipart/form-data` (including file uploads via `*multipart.FileHeader`)
@@ -250,7 +277,7 @@ type CreateUserRequest struct {
     Name   string                `json:"name" form:"name" validate:"required,min=3,max=100"`
     Email  string                `json:"email" form:"email" validate:"required,email"`
     Phone  string                `json:"phone" form:"phone" validate:"omitempty"`
-    Avatar *multipart.FileHeader `json:"avatar" form:"avatar"` // Automatically bound upload
+    Avatar *multipart.FileHeader `json:"avatar" form:"avatar"`
 }
 ```
 
@@ -264,51 +291,50 @@ if err := validation.BindAndValidate(c, req); err != nil {
 
 ---
 
-## ⚙️ Environment Variables (`.env`)
+## ⚙️ Environment Variables & Configuration
 
 | Variable | Default | Description |
 |---|---|---|
 | `APP_NAME` | `golang-api` | Application name |
-| `ENVIRONMENT` | `development` | `development` or `production` (JSON logging enforced) |
-| `SERVER_PORT` | `8080` | Fiber HTTP listening port |
-| `LOG_LEVEL` | `info` | Logging verbosity: `debug`, `info`, `warn`, `error` |
+| `ENVIRONMENT` | `development` | `development` or `production` (JSON logging) |
+| `SERVER_PORT` | `8080` | HTTP Fiber listening port |
+| `LOG_LEVEL` | `info` | Log levels: `debug`, `info`, `warn`, `error` |
 | `DB_HOST` | `localhost` | PostgreSQL host |
 | `DB_PORT` | `5432` | PostgreSQL port |
 | `DB_USER` / `DB_PASSWORD` | `postgres` | PostgreSQL credentials |
 | `DB_NAME` | `mydb` | Database name |
-| `AUTO_MIGRATE` | `true` | Automatically run database migrations on boot |
-| `REDIS_ENABLED` | `true` | Enables Redis caching, token revocation & bridge |
-| `REDIS_HOST` / `REDIS_PORT`| `localhost:6379` | Redis connection endpoint |
-| `RABBITMQ_ENABLED` | `true` | Enables RabbitMQ message broker |
-| `RABBITMQ_HOST` / `PORT` | `localhost:5672` | RabbitMQ connection endpoint |
-| `KAFKA_ENABLED` | `false` | Enables native Kafka producer |
-| `KAFKA_BROKERS` | `localhost:9092` | Kafka broker endpoints (comma-separated) |
-| `REALTIME_ENABLED` | `true` | Master switch for realtime capabilities (SSE & WS) |
-| `REALTIME_SSE_ENABLED` | `true` | Enables Server-Sent Events endpoints |
-| `REALTIME_WS_ENABLED` | `true` | Enables WebSocket endpoint |
-| `REALTIME_BRIDGE` | `redis` | Multi-pod fan-out transport: `redis`, `rabbitmq`, or `both` |
-| `IDEMPOTENCY_ENABLED` | `true` | Enables idempotency key middleware on `/api/v1` routes |
+| `AUTO_MIGRATE` | `true` | Auto-run migrations at startup |
+| `REDIS_ENABLED` | `true` | Enable Redis cache & token storage |
+| `REDIS_HOST` / `REDIS_PORT`| `localhost:6379` | Redis connection address |
+| `RABBITMQ_ENABLED` | `true` | Enable RabbitMQ broker |
+| `RABBITMQ_HOST` / `PORT` | `localhost:5672` | RabbitMQ connection address |
+| `KAFKA_ENABLED` | `false` | Enable Apache Kafka producer |
+| `KAFKA_BROKERS` | `localhost:9092` | Kafka broker endpoints |
+| `REALTIME_ENABLED` | `true` | Realtime master toggle (SSE & WS) |
+| `REALTIME_SSE_ENABLED` | `true` | Enable Server-Sent Events |
+| `REALTIME_WS_ENABLED` | `true` | Enable WebSocket endpoints |
+| `REALTIME_BRIDGE` | `redis` | Multi-pod bridge: `redis`, `rabbitmq`, or `both` |
+| `IDEMPOTENCY_ENABLED` | `true` | Enable idempotency on `/api/v1` routes |
 
 ---
 
-## 🛠️ Development Workflow
+## 🛠️ Development Commands
 
 ```bash title="Terminal"
 cd backend
 
-# 1. Download dependencies
+# Download dependencies
 go mod download
 
-# 2. Run database migrations
+# Run database migrations
 make migrate-up
 
-# 3. Start development server (port 8080)
+# Start local dev server
 make dev
-# or: go run cmd/api/main.go
 
-# 4. Run test suites
+# Run test suite
 make test
 
-# 5. Format and run linters
+# Format & lint code
 make check
 ```

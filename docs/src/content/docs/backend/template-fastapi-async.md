@@ -25,9 +25,29 @@ Template `template-fastapi-async` adalah backend REST API berkecepatan tinggi be
 
 ---
 
-## ⚡ Implementasi Transaksi Nyata (`@transactional` & `AsyncSession`)
+## ⚡ Transaksi Database (Pure Parameter Passing)
 
-Di template `template-fastapi-async`, repository layer **tidak melakukan auto-commit** agar konsistensi operasi multi-tabel terjaga. Batas transaksi diorkestrasikan secara bersih via decorator `@transactional` di router handler (atau manual `async with session.begin()`), sementara objek `db: AsyncSession` dioper ke service dan repository:
+Di template `template-fastapi-async`, repository layer **tidak melakukan auto-commit** agar konsistensi operasi multi-tabel terjaga. Batas transaksi diorkestrasikan secara bersih via decorator `@transactional` dan `@read_only` di router handler (atau manual `async with session.begin()`), sementara objek `db: AsyncSession` dioper secara eksplisit ke service dan repository:
+
+### 1. Operasi Pembacaan / Read-Only
+
+Untuk operasi pembacaan data, decorator `@read_only` memastikan session query dieksekusi tanpa overhead flush:
+
+```python title="modules/users/routes.py"
+@router.get("/{user_id}", response_model=BaseResponse[UserResponse])
+@read_only
+async def get_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    service = UserService(db)
+    user = await service.get_user_by_id(user_id)
+    return success_response(data=user, message="User retrieved")
+```
+
+### 2. Operasi Mutasi Data & Atomic Rollback
+
+Untuk operasi penulisan data (`INSERT`, `UPDATE`, `DELETE`), decorator `@transactional` memastikan atomisitas dan auto-rollback jika terjadi exception:
 
 ```python title="modules/users/routes.py"
 from fastapi import APIRouter, Depends, status
@@ -58,20 +78,9 @@ async def create_user(
         message="User successfully registered",
         code="USER_CREATED"
     )
-
-@router.get("/{user_id}", response_model=BaseResponse[UserResponse])
-@read_only
-async def get_user(
-    user_id: int,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Membaca data user dalam mode read-only transaction.
-    """
-    service = UserService(db)
-    user = await service.get_user_by_id(user_id)
-    return success_response(data=user, message="User retrieved")
 ```
+
+### 3. Layer Repository
 
 Pada layer repository, query dieksekusi murni via koneksi `db: AsyncSession`:
 
@@ -108,7 +117,7 @@ class UserRepository:
 
 ---
 
-## 📡 Real-time Engine: SSE, WebSocket & Redis Pub/Sub
+## 📡 Real-time Engine: SSE, WebSocket & Distributed Bridge
 
 FastAPI template menyediakan endpoint SSE dan WebSocket yang terintegrasi langsung dengan Redis Pub/Sub untuk penskalaan multi-instance (Kubernetes Pods):
 
@@ -146,7 +155,7 @@ eventSource.onerror = (err) => {
 };
 ```
 
-### 2. WebSocket Connection Manager
+### 2. Full-Duplex WebSocket
 WebSocket dikelola oleh `ConnectionManager` (`lib/websocket_manager.py`) dengan autentikasi berbasis query param token:
 
 ```javascript title="Contoh Client WebSocket (Browser / Node.js)"
@@ -163,7 +172,12 @@ socket.onmessage = (event) => {
 };
 ```
 
-### 3. Daftar Endpoint Realtime
+### 3. Distributed Auto-Bridge (Horizontal Scaling)
+Untuk penskalaan multi-pod di Kubernetes, seluruh koneksi SSE dan WebSocket dihubungkan via Redis Pub/Sub:
+- Worker berlangganan ke channel Redis `ws_broadcast` dan `sse_broadcast`.
+- Saat sebuah node mem-publish event realtime, seluruh node menerima event dan mem-forward ke client lokalnya masing-masing.
+
+### 4. Daftar Endpoint Realtime
 
 | Method / Protocol | Endpoint | Deskripsi | Autentikasi |
 |---|---|---|---|
@@ -180,10 +194,10 @@ socket.onmessage = (event) => {
 
 Template mendukung pengiriman event ke antrean pesan enterprise secara non-blocking:
 
-### 1. RabbitMQ Async Producer (`modules/rabbitmq/`)
+### 1. RabbitMQ Producer & Consumer
 Menggunakan `aio-pika` untuk koneksi non-blocking ke RabbitMQ:
 
-```python
+```python title="modules/rabbitmq/service.py"
 from modules.rabbitmq.service import RabbitMQService
 
 rabbitmq = RabbitMQService()
@@ -193,23 +207,10 @@ await rabbitmq.publish_message(
 )
 ```
 
-Tersedia endpoint REST untuk publish pesan langsung:
-- `POST /rabbitmq/publish`: Menerima `{ "queue_name": "tasks", "message": { ... } }`
-- `GET /rabbitmq/queue-info/{queue_name}`: Memeriksa jumlah pesan yang ada di antrean
-
-```bash title="cURL Publish ke RabbitMQ"
-curl -X POST http://localhost:8000/rabbitmq/publish \
-  -H "Content-Type: application/json" \
-  -d '{
-    "queue_name": "email_queue",
-    "message": { "to": "user@example.com", "subject": "Welcome!" }
-  }'
-```
-
-### 2. Apache Kafka Async Producer (`modules/kafka/`)
+### 2. Apache Kafka Producer
 Menggunakan `aiokafka` untuk mengirim event record ke Kafka topic:
 
-```python
+```python title="lib/kafka_client.py"
 from lib.kafka_client import kafka_client
 
 await kafka_client.publish_message(
@@ -219,10 +220,18 @@ await kafka_client.publish_message(
 )
 ```
 
-Endpoint HTTP publik untuk Kafka:
-- `POST /kafka-send`: Mengirim pesan ke topic tertentu (atau fallback ke `KAFKA_TOPIC` default).
+### 3. Daftar Endpoint & Testing cURL
 
-```bash title="cURL Publish ke Apache Kafka"
+```bash title="cURL Publish ke RabbitMQ & Kafka"
+# RabbitMQ Publish
+curl -X POST http://localhost:8000/rabbitmq/publish \
+  -H "Content-Type: application/json" \
+  -d '{
+    "queue_name": "email_queue",
+    "message": { "to": "user@example.com", "subject": "Welcome!" }
+  }'
+
+# Apache Kafka Publish
 curl -X POST http://localhost:8000/kafka-send \
   -H "Content-Type: application/json" \
   -d '{
@@ -234,9 +243,11 @@ curl -X POST http://localhost:8000/kafka-send \
 
 ---
 
-## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
+## 🛡️ Proteksi Idempotency (X-Idempotency-Key)
 
-`template-fastapi-async` dilengkapi middleware idempotency terdistribusi penuh (`middleware/idempotency.py`) yang mengimplementasikan spesifikasi IETF draft. Middleware ini melindungi endpoint mutasi (`POST`, `PATCH`) dari duplikasi pemrosesan ketika terjadi network retry atau timeout:
+`template-fastapi-async` dilengkapi middleware idempotency terdistribusi penuh (`middleware/idempotency.py`) yang mengimplementasikan spesifikasi IETF draft:
+
+### 1. Konfigurasi Middleware & Storage
 
 ```python title="main.py"
 from middleware.idempotency import IdempotencyMiddleware, RedisIdempotencyStorage
@@ -268,16 +279,32 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
     return success_response(await service.create_user(data))
 ```
 
-### Mekanisme Kerja di FastAPI:
+### 2. Mekanisme Kunci, Fingerprint & Replay
 1. **Pemeriksaan Header**: Memeriksa header `Idempotency-Key` atau `X-Idempotency-Key`.
 2. **Distributed Lock Redis**: Menggunakan Redis `SET NX EX` untuk mengunci key selama 30 detik. Request paralel yang bersamaan akan menerima HTTP `409 Conflict` (`IDEMPOTENCY_CONFLICT`).
 3. **Payload Fingerprint SHA-256**: Mengkalkulasi fingerprint dari `user_id + method + path + body`. Jika key sama dikirim dengan payload berbeda, server mengembalikan `422 Unprocessable Entity` (`IDEMPOTENCY_PAYLOAD_MISMATCH`).
-4. **Instant Replay**: Response yang tersimpan (status code, headers, dan JSON body) di-replay langsung tanpa mengeksekusi ulang route handler, disertai header `Idempotent-Replayed: true`.
+4. **Instant Replay**: Response yang tersimpan di-replay langsung tanpa mengeksekusi ulang route handler, disertai header `Idempotent-Replayed: true`.
 5. **Auto Unlock on 5xx**: Jika terjadi error server (HTTP 500+), lock otomatis dihapus dari Redis agar client dapat mencoba kembali (*retry safely*).
 
 ---
 
-## ⚙️ Variabel Lingkungan (`.env`)
+## 📋 Validasi Input Request & Boundaries
+
+Validasi Pydantic v2 memastikan request body divalidasi keamanannya sebelum dieksekusi:
+
+```python title="modules/users/schemas.py"
+from pydantic import BaseModel, EmailStr, Field
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=100)
+    name: str = Field(min_length=2, max_length=100)
+    role: str = Field(default="user")
+```
+
+---
+
+## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```ini title=".env"
 # Application Settings

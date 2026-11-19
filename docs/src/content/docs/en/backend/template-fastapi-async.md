@@ -25,9 +25,29 @@ The `template-fastapi-async` template is a high-speed asynchronous REST API back
 
 ---
 
-## ⚡ Database Transactions (`@transactional` & `AsyncSession`)
+## ⚡ Database Transactions (Pure Parameter Passing)
 
-In `template-fastapi-async`, repository methods **do not auto-commit**, ensuring consistency across multi-table operations. Transaction boundaries are declaratively managed via `@transactional` on route handlers (or manually with `async with session.begin()`), passing `db: AsyncSession` to services and repositories:
+In `template-fastapi-async`, repository methods **do not auto-commit**, ensuring consistency across multi-table operations. Transaction boundaries are declaratively managed via `@transactional` and `@read_only` decorators, passing `db: AsyncSession` explicitly to services and repositories:
+
+### 1. Read-Only Operations
+
+For data queries, `@read_only` ensures session queries execute without flush overhead:
+
+```python title="modules/users/routes.py"
+@router.get("/{user_id}", response_model=BaseResponse[UserResponse])
+@read_only
+async def get_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    service = UserService(db)
+    user = await service.get_user_by_id(user_id)
+    return success_response(data=user, message="User retrieved")
+```
+
+### 2. Data Mutations & Atomic Rollback
+
+For write operations (`INSERT`, `UPDATE`, `DELETE`), `@transactional` enforces atomic transactions and automatic rollbacks on unhandled exceptions:
 
 ```python title="modules/users/routes.py"
 from fastapi import APIRouter, Depends, status
@@ -58,20 +78,9 @@ async def create_user(
         message="User successfully registered",
         code="USER_CREATED"
     )
-
-@router.get("/{user_id}", response_model=BaseResponse[UserResponse])
-@read_only
-async def get_user(
-    user_id: int,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Retrieves user details in a read-only transaction.
-    """
-    service = UserService(db)
-    user = await service.get_user_by_id(user_id)
-    return success_response(data=user, message="User retrieved")
 ```
+
+### 3. Repository Layer
 
 At the repository level, queries execute directly on `db: AsyncSession`:
 
@@ -108,7 +117,7 @@ class UserRepository:
 
 ---
 
-## 📡 Real-time Engine: SSE, WebSocket & Redis Pub/Sub
+## 📡 Real-time Engine: SSE, WebSocket & Distributed Bridge
 
 The FastAPI template provides robust SSE and WebSocket capabilities tightly integrated with Redis Pub/Sub for seamless horizontal scaling across Kubernetes Pods:
 
@@ -136,17 +145,13 @@ eventSource.onmessage = (event) => {
   console.log('Realtime Event:', data);
 };
 
-eventSource.addEventListener('notification', (event) => {
-  console.log('User Notification:', JSON.parse(event.data));
-});
-
 eventSource.onerror = (err) => {
   console.error('SSE Error:', err);
   eventSource.close();
 };
 ```
 
-### 2. WebSocket Connection Manager
+### 2. Full-Duplex WebSocket
 WebSockets are orchestrated through `ConnectionManager` (`lib/websocket_manager.py`) with optional JWT authentication via query parameters:
 
 ```javascript title="Client WebSocket Example (Browser / Node.js)"
@@ -163,7 +168,12 @@ socket.onmessage = (event) => {
 };
 ```
 
-### 3. Realtime API Endpoints
+### 3. Distributed Auto-Bridge (Horizontal Scaling)
+Across Kubernetes pods, Redis Pub/Sub bridges all connections:
+- Pods subscribe to Redis channels `ws_broadcast` and `sse_broadcast`.
+- When an event is emitted, all pods receive the payload and dispatch it to their local socket connections.
+
+### 4. Realtime API Endpoints
 
 | Method / Protocol | Endpoint | Description | Authentication |
 |---|---|---|---|
@@ -180,10 +190,10 @@ socket.onmessage = (event) => {
 
 The backend template supports high-throughput non-blocking event publishing across both enterprise brokers:
 
-### 1. RabbitMQ Async Producer (`modules/rabbitmq/`)
+### 1. RabbitMQ Producer & Consumer
 Powered by `aio-pika` for async AMQP communication:
 
-```python
+```python title="modules/rabbitmq/service.py"
 from modules.rabbitmq.service import RabbitMQService
 
 rabbitmq = RabbitMQService()
@@ -193,23 +203,10 @@ await rabbitmq.publish_message(
 )
 ```
 
-REST endpoints for RabbitMQ:
-- `POST /rabbitmq/publish`: Accepts `{ "queue_name": "tasks", "message": { ... } }`
-- `GET /rabbitmq/queue-info/{queue_name}`: Inspects message backlog on a given queue
-
-```bash title="cURL Publish to RabbitMQ"
-curl -X POST http://localhost:8000/rabbitmq/publish \
-  -H "Content-Type: application/json" \
-  -d '{
-    "queue_name": "email_queue",
-    "message": { "to": "user@example.com", "subject": "Welcome!" }
-  }'
-```
-
-### 2. Apache Kafka Async Producer (`modules/kafka/`)
+### 2. Apache Kafka Producer
 Driven by `aiokafka` for streaming records to Apache Kafka:
 
-```python
+```python title="lib/kafka_client.py"
 from lib.kafka_client import kafka_client
 
 await kafka_client.publish_message(
@@ -219,10 +216,18 @@ await kafka_client.publish_message(
 )
 ```
 
-REST endpoint for Kafka:
-- `POST /kafka-send`: Dispatches a message to a topic (or defaults to `KAFKA_TOPIC`).
+### 3. Broker Endpoints & Testing cURL
 
-```bash title="cURL Publish to Apache Kafka"
+```bash title="cURL Publish to RabbitMQ & Kafka"
+# RabbitMQ Publish
+curl -X POST http://localhost:8000/rabbitmq/publish \
+  -H "Content-Type: application/json" \
+  -d '{
+    "queue_name": "email_queue",
+    "message": { "to": "user@example.com", "subject": "Welcome!" }
+  }'
+
+# Apache Kafka Publish
 curl -X POST http://localhost:8000/kafka-send \
   -H "Content-Type: application/json" \
   -d '{
@@ -234,9 +239,11 @@ curl -X POST http://localhost:8000/kafka-send \
 
 ---
 
-## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
+## 🛡️ Idempotency Protection (X-Idempotency-Key)
 
-`template-fastapi-async` provides production-grade distributed idempotency middleware (`middleware/idempotency.py`) implementing the IETF draft specification. It guards mutating operations (`POST`, `PATCH`) against duplicate processing caused by network drops or client retries:
+`template-fastapi-async` provides production-grade distributed idempotency middleware (`middleware/idempotency.py`) implementing the IETF draft specification:
+
+### 1. Middleware & Storage Configuration
 
 ```python title="main.py"
 from middleware.idempotency import IdempotencyMiddleware, RedisIdempotencyStorage
@@ -268,7 +275,7 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
     return success_response(await service.create_user(data))
 ```
 
-### Idempotency Mechanics in FastAPI:
+### 2. Lock, Fingerprint & Replay Mechanics
 1. **Header Inspection**: Evaluates `Idempotency-Key` or `X-Idempotency-Key`.
 2. **Atomic Distributed Locking**: Acquires a Redis lock using `SET NX EX` for 30 seconds. Concurrent requests with the identical key receive HTTP `409 Conflict` (`IDEMPOTENCY_CONFLICT`).
 3. **Payload Fingerprint (SHA-256)**: Hashes `user_id + method + path + body`. Submitting an existing key with altered parameters returns `422 Unprocessable Entity` (`IDEMPOTENCY_PAYLOAD_MISMATCH`).
@@ -277,7 +284,23 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 ---
 
-## ⚙️ Environment Variables (`.env`)
+## 📋 Request Validation & Boundaries
+
+Pydantic v2 schemas enforce structural validation before request execution:
+
+```python title="modules/users/schemas.py"
+from pydantic import BaseModel, EmailStr, Field
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=100)
+    name: str = Field(min_length=2, max_length=100)
+    role: str = Field(default="user")
+```
+
+---
+
+## ⚙️ Environment Variables & Configuration
 
 ```ini title=".env"
 # Application Settings

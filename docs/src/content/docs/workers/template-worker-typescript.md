@@ -21,58 +21,11 @@ Template `template-worker-typescript` adalah background worker consumer berbasis
 
 ---
 
-## ⚡ Implementasi Consumer & Services
+## ⚡ Implementasi Consumer & Handlers
 
-Orkestrasi utama berada pada `src/index.ts`:
+Berikut adalah implementasi consumer nyata yang ada pada template TypeScript:
 
-```typescript title="src/index.ts"
-import { kafkaConfig } from './config/kafka.config';
-import { rabbitmqConfig } from './config/rabbitmq.config';
-import { KafkaService } from './services/kafka.service';
-import { RabbitMQService } from './services/rabbitmq.service';
-import logger from './utils/logger';
-import { handleMessage } from './workers/message.worker';
-
-async function main() {
-    const brokerType = (process.env.MESSAGE_BROKER || 'rabbitmq').toLowerCase();
-    logger.info(`Starting Worker with driver: [${brokerType.toUpperCase()}]...`);
-
-    if (brokerType === 'kafka') {
-        const kafkaService = new KafkaService(kafkaConfig);
-        await kafkaService.connect();
-        await kafkaService.consume(handleMessage);
-        logger.info('Kafka Worker is running and waiting for events...');
-
-        const shutdown = async () => {
-            logger.info('Shutting down Kafka worker...');
-            await kafkaService.close();
-            process.exit(0);
-        };
-        process.on('SIGINT', shutdown);
-        process.on('SIGTERM', shutdown);
-    } else {
-        const rabbitMQService = new RabbitMQService(rabbitmqConfig);
-        await rabbitMQService.connect();
-        await rabbitMQService.consume(handleMessage);
-        logger.info('RabbitMQ Worker is running and waiting for messages...');
-
-        const shutdown = async () => {
-            logger.info('Shutting down RabbitMQ worker...');
-            await rabbitMQService.close();
-            process.exit(0);
-        };
-        process.on('SIGINT', shutdown);
-        process.on('SIGTERM', shutdown);
-    }
-}
-
-main().catch((err) => {
-    logger.error('Fatal worker startup error', { error: String(err) });
-    process.exit(1);
-});
-```
-
-Dan implementasi konsumsi RabbitMQ dengan manual Ack/Nack:
+### 1. RabbitMQ Consumer Loop
 
 ```typescript title="src/services/rabbitmq.service.ts"
 async consume(handler: MessageHandler): Promise<void> {
@@ -87,7 +40,7 @@ async consume(handler: MessageHandler): Promise<void> {
                 const content = JSON.parse(msg.content.toString());
                 logger.info('Processing task message', { id: content.id });
 
-                await handler(content);
+                await handler(content, msg);
 
                 // Manual Ack setelah handler sukses
                 this.channel?.ack(msg);
@@ -102,9 +55,88 @@ async consume(handler: MessageHandler): Promise<void> {
 }
 ```
 
+### 2. Apache Kafka Consumer Loop
+
+```typescript title="src/services/kafka.service.ts"
+public async consume(
+    handler: (content: DefaultMessagePayload, context?: { messageId?: string }) => Promise<void>
+): Promise<void> {
+    if (!this.isConnected) {
+        throw new Error('Kafka consumer is not connected');
+    }
+
+    await this.consumer.subscribe({ topic: this.config.topic, fromBeginning: false });
+    logger.info(`Subscribed to Kafka topic "${this.config.topic}"`);
+
+    await this.consumer.run({
+        eachMessage: async ({ topic, partition, message }) => {
+            const messageId = message.key?.toString() || `${topic}-${partition}-${message.offset}`;
+            try {
+                const rawValue = message.value?.toString() || '{}';
+                const content = JSON.parse(rawValue) as DefaultMessagePayload;
+                await handler(content, { messageId });
+            } catch (err) {
+                logger.error('Error processing Kafka message:', {
+                    messageId,
+                    error: err instanceof Error ? err.message : String(err)
+                });
+            }
+        },
+    });
+}
+```
+
+### 3. Sinyal OS & Graceful Shutdown
+
+Menangkap sinyal `SIGINT` dan `SIGTERM` di `src/index.ts` untuk menutup koneksi broker secara bersih sebelum proses Node.js berhenti:
+
+```typescript title="src/index.ts"
+const shutdown = async () => {
+    logger.info(`Shutting down ${brokerType.toUpperCase()} worker...`);
+    if (brokerType === 'kafka') {
+        await kafkaService.close();
+    } else {
+        await rabbitMQService.close();
+    }
+    process.exit(0);
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+```
+
 ---
 
-## ⚙️ Variabel Lingkungan (`.env`)
+## 📦 Skema Pesan Standar (Message Payload)
+
+```typescript title="src/types/message.types.ts"
+export interface BaseMessagePayload {
+    timestamp?: string | number;
+    correlationId?: string;
+}
+
+export interface DefaultMessagePayload extends BaseMessagePayload {
+    [key: string]: unknown;
+}
+
+export interface EmailMessagePayload extends BaseMessagePayload {
+    to: string;
+    subject: string;
+    body: string;
+}
+
+export interface PaymentMessagePayload extends BaseMessagePayload {
+    orderId: string;
+    amount: number;
+    currency: string;
+    paymentMethod: string;
+    customerEmail: string;
+}
+```
+
+---
+
+## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```ini title=".env"
 # Driver Pilihan: rabbitmq atau kafka

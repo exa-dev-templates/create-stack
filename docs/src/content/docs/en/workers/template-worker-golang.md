@@ -9,7 +9,7 @@ The `template-worker-golang` template is a high-performance background consumer 
 
 ## ✨ Core Architectural Features
 
-- **Dual Broker Drivers (`MESSAGE_BROKER=rabbitmq|kafka`)**: A unified codebase that seamlessly swaps between RabbitMQ (AMQP 0.9.1) and Apache Kafka simply by toggling an environment variable.
+- **Dual Broker Driver (`MESSAGE_BROKER=rabbitmq|kafka`)**: A unified codebase that seamlessly swaps between RabbitMQ (AMQP 0.9.1) and Apache Kafka simply by toggling an environment variable.
 - **QoS Prefetch & Fair Dispatch**: Enforces inflight message limits (default: QoS 1/10) to safeguard against memory exhaustion during unexpected traffic spikes.
 - **Manual Ack / Nack Protocol**:
   - `Ack(false)` confirmations are executed strictly after successful message processing.
@@ -20,37 +20,13 @@ The `template-worker-golang` template is a high-performance background consumer 
 
 ---
 
-## ⚡ Consumer Implementation & Graceful Shutdown
+## ⚡ Consumer Implementation & Handlers
 
 Here is the real consumer architecture in `main.go`:
 
+### 1. RabbitMQ Consumer Loop
+
 ```go title="main.go"
-package main
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"log"
-	"os"
-	"os/signal"
-	"strings"
-	"syscall"
-	"time"
-
-	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/segmentio/kafka-go"
-)
-
-// MessagePayload monorepo standard payload format
-type MessagePayload struct {
-	ID        string            `json:"id"`
-	Type      string            `json:"type"`
-	Data      map[string]string `json:"data,omitempty"`
-	Timestamp int64             `json:"timestamp,omitempty"`
-}
-
 // Start consumes RabbitMQ queue messages with QoS and OS signal handling
 func (w *RabbitWorker) Start() error {
 	msgs, err := w.channel.Consume(
@@ -97,7 +73,11 @@ func (w *RabbitWorker) handleMessage(msg amqp.Delivery) {
 		log.Printf("Error acknowledging message: %v", err)
 	}
 }
+```
 
+### 2. Apache Kafka Consumer Loop
+
+```go title="main.go"
 // startKafkaWorker processes Apache Kafka records with manual offset commits
 func startKafkaWorker(config KafkaConfig) error {
 	r := kafka.NewReader(kafka.ReaderConfig{
@@ -141,9 +121,33 @@ func startKafkaWorker(config KafkaConfig) error {
 }
 ```
 
+### 3. OS Signals & Graceful Shutdown
+
+The worker intercepts `os.Interrupt` and `syscall.SIGTERM` using standard Go channels, allowing in-flight message processing to finish cleanly before terminating socket connections:
+
+```go
+sigChan := make(chan os.Signal, 1)
+signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+<-sigChan
+log.Println("Worker gracefully shutting down...")
+```
+
 ---
 
-## ⚙️ Environment Variables (`.env`)
+## 📦 Standard Message Payload Schema
+
+```go title="main.go"
+type MessagePayload struct {
+	ID        string            `json:"id"`
+	Type      string            `json:"type"`
+	Data      map[string]string `json:"data,omitempty"`
+	Timestamp int64             `json:"timestamp,omitempty"`
+}
+```
+
+---
+
+## ⚙️ Environment Variables & Configuration
 
 ```ini title=".env"
 # Selected Driver: rabbitmq or kafka

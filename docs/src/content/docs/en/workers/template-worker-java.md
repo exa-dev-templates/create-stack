@@ -1,40 +1,32 @@
 ---
 title: Java Worker Template
-description: Spring Boot background consumer supporting dual brokers with RabbitMQ (@RabbitListener) and Apache Kafka (@KafkaListener), Jackson serialization, and concurrency tuning
+description: Spring Boot background consumer supporting dual brokers RabbitMQ (@RabbitListener) and Apache Kafka (@KafkaListener), Jackson serialization, and concurrency tuning
 ---
 
-The `template-worker-java` template is an enterprise background consumer built on **Java 17+** and **Spring Boot**, leveraging `@RabbitListener` and `@KafkaListener` alongside Jackson message conversion for resilient asynchronous processing.
+The `template-worker-java` template is an enterprise-grade background consumer built on **Java 17+** and **Spring Boot**, leveraging `@RabbitListener` and `@KafkaListener` alongside Jackson JSON message converters for resilient, high-throughput asynchronous processing.
 
 ---
 
 ## ✨ Core Architectural Features
 
-- **Dual Broker Drivers (`message.broker=rabbitmq|kafka`)**: Uses Spring conditional components (`@ConditionalOnProperty`) to initialize RabbitMQ or Kafka consumers without code alterations.
-- **Spring AMQP Concurrency Tuning**: Preconfigured multi-threaded listener pools (`concurrency=3`, `max-concurrency=10`) with `prefetch=5` for controlled parallel throughput.
-- **Built-in Automatic Retry & DLQ**: Spring AMQP retry policies (`initial-interval=3000ms`, `max-attempts=3`) before delegating problematic messages to dead letter routing.
-- **Spring Kafka Consumer Group**: Automatic JSON deserialization to `Message` domain models with managed offset commits.
-- **Separation of Concerns**: Message business logic is cleanly decoupled inside `MessageHandler`, isolating payload logic from transport protocols.
-- **SLF4J Structured Logging**: Logback produces structured logs containing message metadata (ID, type, timestamp, processing duration).
+- **Dual Broker Driver (`message.broker=rabbitmq|kafka`)**: Uses Spring conditional beans (`@ConditionalOnProperty`) to dynamically initialize RabbitMQ or Kafka consumers without code modifications.
+- **Spring AMQP Concurrency Tuning**: Configurable multi-threaded listener pool (`concurrency=3`, `max-concurrency=10`) with `prefetch=5` for scalable parallel batching.
+- **Built-in Automatic Retry & DLQ**: Spring AMQP retry template configured with `initial-interval=3000ms` and `max-attempts=3` before forwarding exhausted deliveries to a Dead Letter Queue.
+- **Spring Kafka Consumer Group**: Automated JSON deserialization directly into domain models (`Message`) with managed partition offset management.
+- **Separation of Concerns**: Decouples business processing (`MessageHandler`) from underlying messaging transport listener protocols.
+- **SLF4J Structured Logging**: Logback structured logs capturing message tracing metadata (ID, type, timestamp, and duration).
 
 ---
 
 ## ⚡ Consumer Implementation & Handlers
 
-Here is the dual-broker listener architecture in `template-worker-java`:
+Here is the dual listener implementation in `template-worker-java`:
 
-### 1. RabbitMQ Consumer (`MessageConsumer.java`)
-Active when `message.broker=rabbitmq` (default):
+### 1. RabbitMQ Consumer Loop
+
+Activated automatically when `message.broker=rabbitmq` (default):
 
 ```java title="src/main/java/com/example/template/workerjava/consumer/MessageConsumer.java"
-package com.example.template.workerjava.consumer;
-
-import com.example.template.workerjava.model.Message;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
-
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -56,25 +48,17 @@ public class MessageConsumer {
             log.info("Message processed successfully: {}", message.getId());
         } catch (Exception e) {
             log.error("Error processing message: {}", message.getId(), e);
-            throw e; // Triggers retry policy or DLQ
+            throw e; // Triggers retry policy or Dead Letter Queue routing
         }
     }
 }
 ```
 
-### 2. Kafka Consumer (`KafkaMessageConsumer.java`)
-Active when `message.broker=kafka`:
+### 2. Apache Kafka Consumer Loop
+
+Activated automatically when `message.broker=kafka`:
 
 ```java title="src/main/java/com/example/template/workerjava/consumer/KafkaMessageConsumer.java"
-package com.example.template.workerjava.consumer;
-
-import com.example.template.workerjava.model.Message;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.stereotype.Component;
-
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -101,9 +85,35 @@ public class KafkaMessageConsumer {
 }
 ```
 
+### 3. OS Signals & Graceful Shutdown
+
+Spring Boot coordinates JVM shutdown hooks (`SIGINT` and `SIGTERM`). The listener containers reject new queue polls, complete in-flight transactions within the configured grace period, and cleanly dispose connections:
+
+```properties title="application.properties"
+# Graceful shutdown Spring Boot lifecycle
+server.shutdown=graceful
+spring.lifecycle.timeout-per-shutdown-phase=20s
+```
+
 ---
 
-## ⚙️ Configuration Properties (`application.properties`)
+## 📦 Standard Message Payload Schema
+
+```java title="src/main/java/com/example/template/workerjava/model/Message.java"
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class Message implements Serializable {
+    private String id;
+    private String content;
+    private String type;
+    private Long timestamp;
+}
+```
+
+---
+
+## ⚙️ Environment Variables & Configuration
 
 ```properties title="src/main/resources/application.properties"
 spring.application.name=worker-java
@@ -148,12 +158,12 @@ cd template-worker-java
 # Run worker service
 ./mvnw spring-boot:run
 
-# Run with Apache Kafka driver
+# Run with Kafka broker driver
 MESSAGE_BROKER=kafka ./mvnw spring-boot:run
 
-# Run unit & consumer test suites
+# Execute unit & consumer tests
 ./mvnw test
 
-# Format code with monorepo Spotless standard
+# Format code according to Spotless monorepo standards
 ./mvnw spotless:apply
 ```

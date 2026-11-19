@@ -26,9 +26,26 @@ Template `template-java` adalah starter kit enterprise backend berbasis **Java 1
 
 ---
 
-## ⚡ Implementasi Transaksi Nyata (`@Transactional` Declarative Boundaries)
+## ⚡ Transaksi Database (Pure Parameter Passing)
 
-Sesuai aturan monorepo (`database-transactions.md`), transaksi database dikelola secara deklaratif menggunakan anotasi Spring AOP `@Transactional`. Terdapat pemisahan tegas antara mutasi data (otomatis rollback jika terjadi exception) dan operasi pembacaan (`readOnly = true`) untuk mengoptimalkan performa dirty-checking Hibernate:
+Sesuai aturan monorepo (`database-transactions.md`), transaksi database dikelola secara deklaratif menggunakan anotasi Spring AOP `@Transactional`. Terdapat pemisahan tegas antara operasi mutasi data dan operasi pembacaan:
+
+### 1. Operasi Pembacaan / Read-Only
+
+Operasi pembacaan wajib menyertakan `readOnly = true` untuk mengoptimalkan performa dirty-checking Hibernate:
+
+```java title="src/main/java/com/example/template/java/user/service/UserService.java"
+@Transactional(readOnly = true)
+public User getUserById(Long id) {
+  return userRepository
+      .findById(id)
+      .orElseThrow(() -> new BusinessException("User not found", ApiCode.USER_NOT_FOUND));
+}
+```
+
+### 2. Operasi Mutasi Data & Atomic Rollback
+
+Operasi mutasi data (`INSERT`, `UPDATE`, `DELETE`) di-annotate dengan `@Transactional`. Setiap unchecked exception (`RuntimeException`) otomatis memicu pembatalan (rollback) transaksi secara instan:
 
 ```java title="src/main/java/com/example/template/java/user/service/UserService.java"
 package com.example.template.java.user.service;
@@ -58,10 +75,6 @@ public class UserService {
     this.passwordEncoder = passwordEncoder;
   }
 
-  /**
-   * Operasi mutasi data WAJIB menggunakan @Transactional.
-   * Setiap unchecked exception (RuntimeException) otomatis memicu rollback.
-   */
   @Transactional
   public User createUser(UserRequest request) {
     Optional<User> existing = userRepository.findByEmail(request.getEmail());
@@ -78,22 +91,31 @@ public class UserService {
     log.info("Successfully registered user with ID: {}", savedUser.getId());
     return savedUser;
   }
+}
+```
 
-  /**
-   * Operasi pembacaan WAJIB menggunakan @Transactional(readOnly = true)
-   */
-  @Transactional(readOnly = true)
-  public User getUserById(Long id) {
-    return userRepository
-        .findById(id)
-        .orElseThrow(() -> new BusinessException("User not found", ApiCode.USER_NOT_FOUND));
-  }
+### 3. Layer Repository
+
+Layer repository mengimplementasikan `JpaRepository` dari Spring Data JPA, menjaga query database terisolasi rapi:
+
+```java title="src/main/java/com/example/template/java/user/repository/UserRepository.java"
+package com.example.template.java.user.repository;
+
+import com.example.template.java.user.model.User;
+import java.util.Optional;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface UserRepository extends JpaRepository<User, Long> {
+  Optional<User> findByEmail(String email);
+  boolean existsByEmail(String email);
 }
 ```
 
 ---
 
-## 📡 Real-time Engine: SSE, WebSocket STOMP & Pluggable Bridge
+## 📡 Real-time Engine: SSE, WebSocket & Distributed Bridge
 
 `template-java` menyediakan infrastruktur realtime terdistribusi yang menghubungkan browser dengan kluster backend:
 
@@ -128,7 +150,7 @@ eventSource.onerror = (error) => {
 };
 ```
 
-### 2. WebSocket STOMP & SockJS
+### 2. Full-Duplex WebSocket
 Dikelola oleh `WebSocketConfig` dengan broker STOMP di `/ws`, prefix aplikasi `/app`, dan prefix broker `/topic` serta `/queue`:
 
 ```javascript title="Contoh Client STOMP (JavaScript / React)"
@@ -153,7 +175,7 @@ stompClient.connect({}, (frame) => {
 });
 ```
 
-### 3. Pluggable Realtime Bridge (`app.realtime.bridge`)
+### 3. Distributed Auto-Bridge (Horizontal Scaling)
 Untuk memastikan event tersampaikan ke semua instance pod:
 - **`local`**: `LocalRealtimeBridge` menyebarkan event hanya di dalam JVM lokal (cocok untuk unit test & single node).
 - **`redis`**: `RedisRealtimeBridge` menggunakan channel pub/sub Redis (`realtime:events`).
@@ -178,17 +200,13 @@ app.realtime.bridge=redis  # Opsi: local | redis | rabbitmq
 | `POST` | `/api/demo/realtime/announcement` | Broadcast pengumuman global ke seluruh channel | Terbuka |
 | `POST` | `/api/demo/realtime/channel` | Mengirim data ke channel realtime tertentu | Terbuka |
 
-```bash title="cURL Mengirim Notifikasi Realtime"
-curl -X POST "http://localhost:8080/api/demo/realtime/notify?userId=12&title=Update&message=Your+order+shipped&type=info"
-```
-
 ---
 
 ## 🐰⚡ Dual Message Broker: RabbitMQ & Apache Kafka
 
 Template Spring Boot menyediakan producer dan consumer siap pakai untuk integrasi pipeline pesan:
 
-### 1. RabbitMQ Producer & Consumer (`messaging/rabbit/`)
+### 1. RabbitMQ Producer & Consumer
 Menggunakan Spring AMQP `RabbitTemplate` untuk pengiriman pesan, dan listener `@RabbitListener` untuk konsumsi otomatis:
 
 ```java title="Pengiriman Pesan (Producer)"
@@ -206,12 +224,11 @@ public class RabbitMQConsumerService {
   @RabbitListener(queues = "${app.rabbitmq.queue.name}")
   public void receiveMessage(Map<String, Object> payload) {
     log.info("Received RabbitMQ message from queue: {}", payload);
-    // Jalankan logika bisnis background di sini
   }
 }
 ```
 
-### 2. Apache Kafka Producer (`messaging/kafka/`)
+### 2. Apache Kafka Producer
 Menggunakan `KafkaTemplate<String, Object>` untuk streaming event bervolume tinggi:
 
 ```java title="Pengiriman Pesan ke Kafka"
@@ -221,28 +238,21 @@ private KafkaProducerService kafkaProducer;
 kafkaProducer.sendMessage("app.events", "user-123", Map.of("action", "LOGIN", "timestamp", System.currentTimeMillis()));
 ```
 
+### 3. Daftar Endpoint & Testing cURL
+
+```bash title="Trigger Notifikasi Realtime via cURL"
+curl -X POST "http://localhost:8080/api/demo/realtime/notify?userId=12&title=Update&message=Your+order+shipped&type=info"
+```
+
 ---
 
-## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
+## 🛡️ Proteksi Idempotency (X-Idempotency-Key)
 
-Untuk mencegah eksekusi mutasi ganda akibat retry jaringan, `template-java` menyediakan filter servlet `IdempotencyFilter` dan anotasi kustom `@RequireIdempotencyKey` yang mengimplementasikan spesifikasi IETF draft:
+Untuk mencegah mutasi berulang akibat retry jaringan, `template-java` menyediakan servlet filter `IdempotencyFilter` dan anotasi `@RequireIdempotencyKey`:
+
+### 1. Konfigurasi Middleware & Storage
 
 ```java title="com/example/template/java/order/controller/OrderController.java"
-package com.example.template.java.order.controller;
-
-import com.example.template.java.common.dto.BaseResponse;
-import com.example.template.java.common.idempotency.RequireIdempotencyKey;
-import com.example.template.java.order.dto.OrderRequest;
-import com.example.template.java.order.dto.OrderResponse;
-import com.example.template.java.order.service.OrderService;
-import jakarta.validation.Valid;
-import org.springframework.http.ResponseEntity;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
 @RestController
 @RequestMapping("/api/orders")
 public class OrderController {
@@ -254,13 +264,13 @@ public class OrderController {
   @Transactional
   public ResponseEntity<BaseResponse<OrderResponse>> createOrder(
       @Valid @RequestBody OrderRequest request) {
-    OrderResponse order = orderService.createOrder(request);
-    return ResponseEntity.ok(BaseResponse.success("Order created", order));
+    OrderResponse response = orderService.createOrder(request);
+    return ResponseEntity.ok(BaseResponse.success("Order created", response));
   }
 }
 ```
 
-### Mekanisme Kerja Idempotency di Spring Boot:
+### 2. Mekanisme Kunci, Fingerprint & Replay
 1. **Header Extraction**: `IdempotencyFilter` membaca header `Idempotency-Key` atau `X-Idempotency-Key`.
 2. **Distributed Redis Storage**: Menggunakan `RedisIdempotencyStorage` (atau fallback `MemoryIdempotencyStorage`) dengan TTL default 24 jam (`86400s`) dan lock timeout 30 detik.
 3. **Deteksi Race Condition (409 Conflict)**: Jika request dengan key sama masih berjalan (`status=in_progress`), server langsung menolak dengan kode semantik `IDEMPOTENCY_CONFLICT` (HTTP 409).
@@ -270,7 +280,37 @@ public class OrderController {
 
 ---
 
-## ⚙️ Variabel Konfigurasi (`application.properties`)
+## 📋 Validasi Input Request & Boundaries
+
+Validasi input menggunakan standard Jakarta Bean Validation (`@Valid`):
+
+```java title="com/example/template/java/user/dto/UserRequest.java"
+package com.example.template.java.user.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import lombok.Data;
+
+@Data
+public class UserRequest {
+  @NotBlank(message = "Name is required")
+  @Size(min = 2, max = 100, message = "Name must be between 2 and 100 characters")
+  private String name;
+
+  @NotBlank(message = "Email is required")
+  @Email(message = "Email must be valid")
+  private String email;
+
+  @NotBlank(message = "Password is required")
+  @Size(min = 8, message = "Password must be at least 8 characters")
+  private String password;
+}
+```
+
+---
+
+## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```properties title="src/main/resources/application.properties"
 spring.application.name=template-java

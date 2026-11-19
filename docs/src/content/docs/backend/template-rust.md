@@ -25,9 +25,25 @@ Template `template-rust` adalah backend REST API berkinerja ultra-tinggi yang di
 
 ---
 
-## ⚡ Implementasi Transaksi Nyata (Pure Parameter Passing `&mut Transaction`)
+## ⚡ Transaksi Database (Pure Parameter Passing)
 
 Sesuai aturan monorepo (`database-transactions.md`), transaksi dioper murni via mutable borrow `&mut Transaction<'_, Postgres>` tanpa menyembunyikan transaksi di dalam task-local storage. Service layer mengorkestrasikan atomisitas multi-repository:
+
+### 1. Operasi Pembacaan / Read-Only
+
+Untuk operasi pembacaan, koneksi pool SQLx dieksekusi langsung tanpa overhead transaksi mutasi:
+
+```rust title="src/modules/user/service.rs"
+pub async fn get_user_by_id(&self, id: Uuid) -> Result<UserResponse, AppError> {
+    let user = self.repo.find_by_id(&self.pool, id).await?
+        .ok_or_else(|| AppError::not_found("USER_NOT_FOUND", "User not found"))?;
+    Ok(UserResponse::from(user))
+}
+```
+
+### 2. Operasi Mutasi Data & Atomic Rollback
+
+Untuk registrasi atau mutasi multi-tabel, transaksi dimulai via `self.pool.begin().await?` dan `&mut tx` dioper secara eksplisit:
 
 ```rust title="src/modules/user/service.rs"
 use sqlx::{PgPool, Transaction, Postgres};
@@ -53,7 +69,6 @@ impl UserService {
         }
     }
 
-    /// Registrasi user baru di dalam transaksi atomik
     pub async fn register(&self, req: CreateUserRequest) -> Result<UserResponse, AppError> {
         // 1. Memulai transaksi SQLx eksplisit
         let mut tx = self.pool.begin().await.map_err(|e| {
@@ -89,9 +104,39 @@ impl UserService {
 }
 ```
 
+### 3. Layer Repository
+
+Di layer repository, query dieksekusi langsung pada `&mut Transaction<'_, Postgres>`:
+
+```rust title="src/modules/user/repository.rs"
+pub async fn create_tx(
+    &self,
+    tx: &mut Transaction<'_, Postgres>,
+    new_user: NewUser,
+) -> Result<User, AppError> {
+    let user = sqlx::query_as!(
+        User,
+        r#"
+        INSERT INTO users (email, password_hash, name, role)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, email, password_hash, name, role, created_at, updated_at
+        "#,
+        new_user.email,
+        new_user.password_hash,
+        new_user.name,
+        new_user.role
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(|e| AppError::internal(format!("Database insert failed: {}", e)))?;
+
+    Ok(user)
+}
+```
+
 ---
 
-## 📡 Real-time Engine: SSE, WebSocket & RealtimeHub Auto-Bridge
+## 📡 Real-time Engine: SSE, WebSocket & Distributed Bridge
 
 `template-rust` menyajikan sistem realtime berkecepatan tinggi dengan Tokio broadcast channel dan bridge terdistribusi:
 
@@ -124,7 +169,7 @@ eventSource.onerror = (err) => {
 };
 ```
 
-### 2. WebSocket Handler
+### 2. Full-Duplex WebSocket
 Handler WebSocket (`src/modules/realtime/ws.rs`) memecah socket menjadi dua task independen (`send_task` dan `recv_task`) yang dijalankan paralel:
 
 ```javascript title="Contoh Client WebSocket (Browser / Node.js)"
@@ -140,7 +185,7 @@ ws.onmessage = (event) => {
 };
 ```
 
-### 3. Distributed Bridge (`REALTIME_BRIDGE=local|redis|rabbitmq|both`)
+### 3. Distributed Auto-Bridge (Horizontal Scaling)
 Sistem bridge mengimplementasikan trait `RealtimeBridge`:
 - **`local`**: Hanya mem-broadcast event ke subscriber lokal instance ini.
 - **`redis`**: Mem-publish dan me-listen event melalui Redis Pub/Sub (`realtime.events`).
@@ -158,16 +203,24 @@ pub async fn broadcast(&self, message: impl Into<String>) {
 }
 ```
 
+### 4. Daftar Endpoint Realtime
+
+| Method | Endpoint | Deskripsi | Autentikasi |
+|---|---|---|---|
+| `GET` | `/api/v1/realtime/sse` | Membuka stream SSE dengan keep-alive 15 detik | Terbuka |
+| `WS` | `/api/v1/realtime/ws` | Membuka koneksi WebSocket full-duplex | Terbuka |
+| `POST` | `/api/v1/realtime/broadcast` | Mengirim event realtime ke seluruh subscriber | Wajib (Bearer) |
+
 ---
 
 ## 🐰⚡ Dual Message Broker: RabbitMQ & Apache Kafka
 
 Template Rust dilengkapi modul queue bawaan di `src/pkg/queue/`:
 
-### 1. RabbitMQ Async Broker (`lapin`)
-Dikelola oleh `RabbitMQBroker` (`src/pkg/queue/mod.rs`):
+### 1. RabbitMQ Producer & Consumer
+Dikelola oleh `RabbitMQBroker` (`src/pkg/queue/mod.rs`) berbasis `lapin`:
 
-```rust
+```rust title="src/pkg/queue/mod.rs"
 use crate::pkg::queue::RabbitMQBroker;
 
 let broker = RabbitMQBroker::new(&amqp_url).await?;
@@ -175,21 +228,32 @@ broker.declare_queue("orders_queue", true).await?;
 broker.publish("", "orders_queue", payload_bytes).await?;
 ```
 
-### 2. Apache Kafka Async Broker (`rskafka`)
-Dikelola oleh `KafkaBroker` (`src/pkg/queue/kafka.rs`):
+### 2. Apache Kafka Producer
+Dikelola oleh `KafkaBroker` (`src/pkg/queue/kafka.rs`) berbasis `rskafka`:
 
-```rust
+```rust title="src/pkg/queue/kafka.rs"
 use crate::pkg::queue::KafkaBroker;
 
 let kafka = KafkaBroker::new(vec!["localhost:9092".to_string()]);
 let offset = kafka.publish("app.events", Some(b"order-123".to_vec()), payload_bytes).await?;
 ```
 
+### 3. Daftar Endpoint & Testing cURL
+
+```bash title="Testing Publish Event via cURL"
+curl -X POST http://localhost:8080/api/v1/realtime/broadcast \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello cluster"}'
+```
+
 ---
 
-## 🛡️ Idempotency Protection Layer (Axum Middleware & Store)
+## 🛡️ Proteksi Idempotency (X-Idempotency-Key)
 
 `template-rust` menyertakan middleware idempotency asinkron berkecepatan tinggi di `src/pkg/idempotency/mod.rs` yang mencegat operasi mutasi HTTP (`POST`, `PUT`, `PATCH`) untuk mencegah mutasi ganda:
+
+### 1. Konfigurasi Middleware & Storage
 
 ```rust title="src/main.rs"
 use axum::{middleware, routing::post, Router};
@@ -206,7 +270,7 @@ let app = Router::new()
     }));
 ```
 
-### Mekanisme Kerja Idempotency di Rust Axum:
+### 2. Mekanisme Kunci, Fingerprint & Replay
 1. **Header Evaluator**: Mengekstrak header `idempotency-key` atau `x-idempotency-key`.
 2. **Atomic Lock (`try_lock`)**: Menyimpan status `InProgress` dengan timeout 30 detik. Jika request kedua tiba saat request pertama masih berjalan, server langsung mengembalikan HTTP `409 Conflict` dengan kode semantik `CODE_IDEMPOTENCY_IN_FLIGHT`.
 3. **Response Buffer & Cache**: Mengubah body stream Axum menjadi `Bytes` yang aman di-cache ke dalam `IdempotencyStore` lengkap beserta seluruh response headers.
@@ -215,7 +279,41 @@ let app = Router::new()
 
 ---
 
-## ⚙️ Variabel Lingkungan (`.env`)
+## 📋 Validasi Input Request & Boundaries
+
+Validasi DTO menggunakan custom Axum extractor `ValidatedJson<T>` di atas crate `validator`:
+
+```rust title="src/modules/user/dto.rs"
+use serde::Deserialize;
+use validator::Validate;
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct CreateUserRequest {
+    #[validate(length(min = 3, max = 50, message = "Name must be between 3 and 50 characters"))]
+    pub name: String,
+
+    #[validate(email(message = "Invalid email address"))]
+    pub email: String,
+
+    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
+    pub password: String,
+}
+```
+
+Di controller:
+```rust
+pub async fn register_user(
+    State(service): State<Arc<UserService>>,
+    ValidatedJson(req): ValidatedJson<CreateUserRequest>,
+) -> Result<Json<BaseResponse<UserResponse>>, AppError> {
+    let user = service.register(req).await?;
+    Ok(Json(BaseResponse::success("User registered successfully", user)))
+}
+```
+
+---
+
+## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```ini title=".env"
 # Server Configuration
@@ -255,18 +353,18 @@ KAFKA_TOPIC=app.events
 ```bash title="Terminal"
 cd template-rust
 
-# Compile dan verifikasi query SQLx
+# Check compilation and verify SQLx queries
 cargo check
 
-# Jalankan migrasi database
+# Run database migrations
 sqlx migrate run
 
-# Jalankan server dalam mode development
+# Run local development server
 cargo run
 
-# Jalankan test suite
+# Run test suite
 cargo test
 
-# Build biner release teroptimasi
+# Build optimized release binary
 cargo build --release
 ```

@@ -22,77 +22,95 @@ Template `template-worker-python` adalah background consumer yang dibangun denga
 
 ## ⚡ Implementasi Consumer & Handlers
 
-Orkestrasi utama pada `main.py`:
+Berikut adalah arsitektur consumer nyata yang ada pada template Python:
 
-```python title="main.py"
-import logging
-from config import Config
-from kafka_worker import KafkaWorker
-from worker import custom_message_handler, MessagePayload, RabbitMQWorker
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-def handle_kafka_payload(payload: MessagePayload) -> None:
-    logger.info(f"Processing message of type: {payload.type}")
-    if payload.type == 'email':
-        logger.info(f"Sending email to: {payload.recipient}")
-    elif payload.type == 'notification':
-        logger.info(f"Sending notification: {payload.message}")
-    else:
-        logger.info(f"Processed message payload: {payload.type}")
-
-if __name__ == '__main__':
-    driver = Config.MESSAGE_BROKER
-    logger.info(f"Initializing Worker with driver: [{driver.upper()}]...")
-
-    if driver == 'kafka':
-        worker = KafkaWorker()
-        worker.start(callback=handle_kafka_payload)
-    else:
-        rabbit_worker = RabbitMQWorker()
-        rabbit_worker.start(callback=custom_message_handler)
-```
-
-Logika RabbitMQ consumer dengan penanganan sinyal dan QoS:
+### 1. RabbitMQ Consumer Loop
 
 ```python title="worker.py"
-class RabbitMQWorker:
-    def __init__(self, queue_name: Optional[str] = None, prefetch_count: int = 1) -> None:
-        self.queue_name: str = queue_name or Config.RABBITMQ_QUEUE
-        self.prefetch_count: int = prefetch_count
-        self.connection: Optional[pika.BlockingConnection] = None
-        self.channel: Optional[BlockingChannel] = None
-        self.should_stop: bool = False
+def _default_message_handler(
+    self,
+    ch: BlockingChannel,
+    method: Basic.Deliver,
+    properties: BasicProperties,
+    body: bytes
+) -> None:
+    try:
+        payload_data = json.loads(body.decode('utf-8'))
+        logger.info(f"Successfully processed message: {payload_data}")
+        # Manual Ack setelah sukses
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+    except Exception as e:
+        logger.error(f"Error processing message: {e}")
+        # Nack tanpa requeue agar diteruskan ke DLQ
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+```
 
-        # Register signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+### 2. Apache Kafka Consumer Loop
 
-    def _default_message_handler(
-        self,
-        ch: BlockingChannel,
-        method: Basic.Deliver,
-        properties: BasicProperties,
-        body: bytes
-    ) -> None:
-        try:
-            payload_data = json.loads(body.decode('utf-8'))
-            logger.info(f"Successfully processed message: {payload_data}")
-            # Manual Ack
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
-            # Nack without requeue (send to DLQ)
-            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+```python title="kafka_worker.py"
+self.consumer = KafkaConsumer(
+    self.topic,
+    bootstrap_servers=self.brokers,
+    group_id=self.group_id,
+    auto_offset_reset='earliest',
+    enable_auto_commit=False,
+    value_deserializer=lambda m: json.loads(m.decode('utf-8'))
+)
+
+logger.info(f"Kafka worker listening on topic: {self.topic}...")
+for message in self.consumer:
+    if self.should_stop:
+        break
+    try:
+        raw_data = message.value
+        payload = MessagePayload(
+            type=raw_data.get('type', 'unknown'),
+            recipient=raw_data.get('recipient'),
+            subject=raw_data.get('subject'),
+            body=raw_data.get('body'),
+            message=raw_data.get('message'),
+            extra={k: v for k, v in raw_data.items() if k not in {'type', 'recipient', 'subject', 'body', 'message'}}
+        )
+        if callback:
+            callback(payload)
+        # Commit offset manual setelah proses tuntas
+        self.consumer.commit()
+    except Exception as e:
+        logger.error(f"Error processing Kafka message: {e}")
+```
+
+### 3. Sinyal OS & Graceful Shutdown
+
+Menangkap sinyal `SIGINT` dan `SIGTERM` untuk menghentikan konsumsi antrean dan menutup koneksi broker secara bersih:
+
+```python title="worker.py"
+signal.signal(signal.SIGINT, self._signal_handler)
+signal.signal(signal.SIGTERM, self._signal_handler)
+
+def _signal_handler(self, signum: int, frame: Optional[FrameType]) -> None:
+    logger.info(f"Received signal {signum}. Shutting down worker gracefully...")
+    self.stop()
 ```
 
 ---
 
-## ⚙️ Variabel Lingkungan (`.env`)
+## 📦 Skema Pesan Standar (Message Payload)
+
+```python title="worker.py"
+@dataclass
+class MessagePayload:
+    """Strongly typed message payload structure"""
+    type: str
+    recipient: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    message: Optional[str] = None
+    extra: Optional[dict[str, Any]] = None
+```
+
+---
+
+## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```ini title=".env"
 # Driver Pilihan: rabbitmq atau kafka
@@ -103,9 +121,9 @@ RABBITMQ_HOST=localhost
 RABBITMQ_PORT=5672
 RABBITMQ_USER=guest
 RABBITMQ_PASSWORD=guest
-RABBITMQ_QUEUE=my_queue
-RABBITMQ_EXCHANGE=my_exchange
-RABBITMQ_ROUTING_KEY=my_routing_key
+RABBITMQ_QUEUE=tasks_queue
+RABBITMQ_EXCHANGE=tasks_exchange
+RABBITMQ_ROUTING_KEY=tasks.#
 RABBITMQ_PREFETCH=1
 
 # Konfigurasi Apache Kafka
@@ -121,16 +139,16 @@ KAFKA_TOPIC=app.events
 ```bash title="Terminal"
 cd template-worker-python
 
-# Buat virtual environment & aktifkan
+# Buat dan aktifkan virtualenv
 python3 -m venv venv
 source venv/bin/activate
 
 # Install dependensi
 pip install -r requirements.txt
 
-# Menjalankan background worker
+# Jalankan worker utama
 python main.py
 
-# Mengirim pesan uji coba via producer example
-python producer_example.py
+# Jalankan script publisher test
+python publisher.py
 ```

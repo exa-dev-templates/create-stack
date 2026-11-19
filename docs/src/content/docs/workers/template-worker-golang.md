@@ -20,38 +20,14 @@ Template `template-worker-golang` adalah background worker berkinerja tinggi yan
 
 ---
 
-## ⚡ Implementasi Consumer & Graceful Shutdown Nyata
+## ⚡ Implementasi Consumer & Handlers
 
 Berikut adalah arsitektur consumer nyata yang ada di `main.go`:
 
+### 1. RabbitMQ Consumer Loop
+
 ```go title="main.go"
-package main
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"log"
-	"os"
-	"os/signal"
-	"strings"
-	"syscall"
-	"time"
-
-	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/segmentio/kafka-go"
-)
-
-// MessagePayload skema pesan standar monorepo
-type MessagePayload struct {
-	ID        string            `json:"id"`
-	Type      string            `json:"type"`
-	Data      map[string]string `json:"data,omitempty"`
-	Timestamp int64             `json:"timestamp,omitempty"`
-}
-
-// Start memproses pesan antrean RabbitMQ dengan QoS dan sinyal shutdown
+// Start memproses pesan antrean RabbitMQ dengan QoS dan manual ack
 func (w *RabbitWorker) Start() error {
 	msgs, err := w.channel.Consume(
 		w.config.QueueName,
@@ -97,7 +73,11 @@ func (w *RabbitWorker) handleMessage(msg amqp.Delivery) {
 		log.Printf("Error acknowledging message: %v", err)
 	}
 }
+```
 
+### 2. Apache Kafka Consumer Loop
+
+```go title="main.go"
 // startKafkaWorker memproses record Apache Kafka dengan manual offset commit
 func startKafkaWorker(config KafkaConfig) error {
 	r := kafka.NewReader(kafka.ReaderConfig{
@@ -141,9 +121,33 @@ func startKafkaWorker(config KafkaConfig) error {
 }
 ```
 
+### 3. Sinyal OS & Graceful Shutdown
+
+Worker menangkap `os.Interrupt` dan `syscall.SIGTERM` menggunakan channel Go, memberikan jeda agar goroutine menyelesaikan pemrosesan data in-flight sebelum channel socket ditutup:
+
+```go
+sigChan := make(chan os.Signal, 1)
+signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+<-sigChan
+log.Println("Worker gracefully shutting down...")
+```
+
 ---
 
-## ⚙️ Variabel Lingkungan (`.env`)
+## 📦 Skema Pesan Standar (Message Payload)
+
+```go title="main.go"
+type MessagePayload struct {
+	ID        string            `json:"id"`
+	Type      string            `json:"type"`
+	Data      map[string]string `json:"data,omitempty"`
+	Timestamp int64             `json:"timestamp,omitempty"`
+}
+```
+
+---
+
+## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```ini title=".env"
 # Driver Pilihan: rabbitmq atau kafka

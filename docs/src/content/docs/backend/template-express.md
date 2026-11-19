@@ -23,9 +23,30 @@ Template `template-express` adalah starter kit REST API enterprise berbasis **No
 
 ---
 
-## ⚡ Transaksi Database (Pure Parameter Passing `withTransaction`)
+## ⚡ Transaksi Database (Pure Parameter Passing)
 
 Sesuai aturan arsitektur monorepo (`database-transactions.md`), operasi mutasi multi-tabel wajib berada dalam transaksi database. `Database.getInstance().withTransaction` mengontrol lifecycle koneksi pool client, query `BEGIN`, `COMMIT`, dan auto-`ROLLBACK` jika terjadi exception:
+
+### 1. Operasi Pembacaan / Read-Only
+
+Untuk query pembacaan data, koneksi pool client dieksekusi via `withReadOnlyTransaction`:
+
+```typescript title="src/modules/users/service.ts"
+async getUserById (id: string): Promise<User> {
+  const db = Database.getInstance()
+  return await db.withReadOnlyTransaction(async (client) => {
+    const user = await userRepository.findById(id, client)
+    if (!user) {
+      throw new NotFoundError('User not found')
+    }
+    return user
+  })
+}
+```
+
+### 2. Operasi Mutasi Data & Atomic Rollback
+
+Untuk penulisan data (`INSERT`, `UPDATE`, `DELETE`), alur bisnis dieksekusi di dalam `withTransaction`:
 
 ```typescript title="src/modules/users/service.ts"
 import { Database } from '../../config/database'
@@ -35,9 +56,6 @@ import { EmailAlreadyExistsError, ValidationError } from '../../pkg/errors'
 import type { CreateUserDTO, User } from './types'
 
 export class UserService {
-  /**
-   * Create a new user (dalam atomic database transaction)
-   */
   async createUser (data: CreateUserDTO): Promise<User> {
     const { name, email, password } = data
 
@@ -73,6 +91,8 @@ export class UserService {
 }
 ```
 
+### 3. Layer Repository
+
 Pada layer repository, query dieksekusi langsung pada objek `client: PoolClient`:
 
 ```typescript title="src/modules/users/repository.ts"
@@ -101,9 +121,9 @@ class UserRepository extends BaseRepository<User> {
 
 ---
 
-## 📡 Real-time Engine: SSE, WebSocket & Distributed Auto-Bridge
+## 📡 Real-time Engine: SSE, WebSocket & Distributed Bridge
 
-`template-express` menyediakan solusi realtime komprehensif yang mendukung dua protokol populer: **Server-Sent Events (SSE)** untuk unidirectional stream dan **WebSocket (Socket.IO)** untuk komunikasi bidirectional berlatensi rendah.
+`template-express` menyediakan solusi realtime komprehensif yang mendukung dua protokol: **Server-Sent Events (SSE)** untuk unidirectional stream dan **WebSocket (Socket.IO)** untuk komunikasi bidirectional berlatensi rendah.
 
 ```mermaid
 flowchart TD
@@ -130,17 +150,13 @@ eventSource.onmessage = (event) => {
   const payload = JSON.parse(event.data);
   console.log('General Event:', payload);
 };
-eventSource.addEventListener('test', (event) => {
-  const payload = JSON.parse(event.data);
-  console.log('Custom Event [test]:', payload);
-});
 eventSource.onerror = (err) => {
   console.error('SSE Error:', err);
   eventSource.close();
 };
 ```
 
-### 2. WebSocket Service (Socket.IO)
+### 2. Full-Duplex WebSocket
 WebSocket berjalan di atas Socket.IO (`WebSocketService.getInstance()`) dan diproteksi oleh middleware autentikasi JWT handshake:
 
 ```javascript title="Contoh Client Socket.IO (Frontend)"
@@ -162,7 +178,7 @@ socket.on("notification", (data) => {
 });
 ```
 
-### 3. Distributed Auto-Bridge (`REALTIME_BRIDGE=redis|rabbitmq`)
+### 3. Distributed Auto-Bridge (Horizontal Scaling)
 Agar event realtime tersampaikan ke pengguna yang terhubung di server/pod berbeda pada arsitektur multi-instance Kubernetes:
 - **Redis Bridge (`REALTIME_BRIDGE=redis`)**: Menggunakan Redis Pub/Sub (`pSubscribe`) untuk pertukaran pesan instan antar-node.
 - **RabbitMQ Bridge (`REALTIME_BRIDGE=rabbitmq`)**: Menggunakan topic exchange `realtime` dengan antrean eksklusif per instans dan pola routing `#`.
@@ -191,29 +207,16 @@ export function createBridge (): RealtimeBridge {
 | `GET` | `/api/v1/realtime/online/:userId` | Memeriksa apakah user tertentu sedang online | Wajib |
 | `POST` | `/api/v1/realtime/disconnect/:userId` | Memutus paksa koneksi user tertentu (Admin) | Wajib (Admin) |
 
-```bash title="Contoh: Mengirim Realtime Notification via cURL"
-curl -X POST http://localhost:5000/api/v1/realtime/notify/123 \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": "order_completed",
-    "data": {
-      "orderId": "ORD-9981",
-      "status": "PAID"
-    }
-  }'
-```
-
 ---
 
 ## 🐰⚡ Dual Message Broker: RabbitMQ & Apache Kafka
 
 `template-express` menyediakan klien siap pakai untuk orkestrasi event asynchronous tingkat enterprise:
 
-### 1. RabbitMQ Client (`src/config/rabbitmq.ts`)
+### 1. RabbitMQ Producer & Consumer
 Menggunakan driver resmi `amqplib` dengan fitur *automatic reconnection*, channel pooling, dan konfirmasi pesan:
 
-```typescript
+```typescript title="src/config/rabbitmq.ts"
 import RabbitMQClient from '../config/rabbitmq'
 
 const rabbit = RabbitMQClient.getInstance()
@@ -224,10 +227,10 @@ await rabbit.publishMessage('orders_queue', {
 })
 ```
 
-### 2. Apache Kafka Producer (`src/config/kafka.ts`)
+### 2. Apache Kafka Producer
 Menggunakan **KafkaJS** untuk publishing event stream bervolume tinggi:
 
-```typescript
+```typescript title="src/config/kafka.ts"
 import KafkaClient from '../config/kafka'
 
 const kafka = KafkaClient.getInstance()
@@ -239,11 +242,25 @@ await kafka.publish('orders-events', [
 ])
 ```
 
+### 3. Daftar Endpoint & Testing cURL
+
+```bash title="Testing Pengiriman Event ke RabbitMQ / Realtime via cURL"
+curl -X POST http://localhost:5000/api/v1/realtime/broadcast \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event": "global_announcement",
+    "data": { "message": "System update in 10 minutes" }
+  }'
+```
+
 ---
 
-## 🛡️ Idempotency Protection Layer (Redis & Memory Storage)
+## 🛡️ Proteksi Idempotency (X-Idempotency-Key)
 
 Untuk melindungi operasi mutasi penting (seperti transaksi pembayaran, pembuatan pesanan, atau mutasi data sensitif) dari duplikasi akibat retry jaringan, `template-express` menyediakan middleware idempotency bawaan di `src/middleware/idempotency.ts` yang mematuhi standar IETF draft:
+
+### 1. Konfigurasi Middleware & Storage
 
 ```typescript title="src/modules/orders/routes.ts"
 import { Router } from 'express'
@@ -267,7 +284,7 @@ router.post(
 export default router
 ```
 
-### Mekanisme Kerja Idempotency di Express:
+### 2. Mekanisme Kunci, Fingerprint & Replay
 1. **Header Inspection**: Middleware memeriksa header `Idempotency-Key` atau `X-Idempotency-Key`.
 2. **Atomic Distributed Locking**: Melakukan `SET idempotency:{userId}:{key} NX EX 30` di Redis. Jika ada request paralel dengan key yang sama, server langsung mengembalikan `409 Conflict`.
 3. **Payload Fingerprinting (SHA-256)**: Menghitung hash SHA-256 dari `userId + method + path + body`. Jika client mengirim ulang key yang sama namun isinya berbeda, server mengembalikan `422 Unprocessable Entity` (`IdempotencyPayloadMismatchError`).
@@ -276,7 +293,7 @@ export default router
 
 ---
 
-## 📋 Zod Validation Boundary & Error Handling
+## 📋 Validasi Input Request & Boundaries
 
 Validasi Zod memastikan semua request payload terdefinisi dengan skema kuat:
 
@@ -296,7 +313,7 @@ export const notifyUserSchema = z.object({
 
 ---
 
-## ⚙️ Variabel Lingkungan (`.env`)
+## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```ini title=".env"
 # Server Configuration

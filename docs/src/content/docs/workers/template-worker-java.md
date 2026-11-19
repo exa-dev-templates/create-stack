@@ -22,19 +22,11 @@ Template `template-worker-java` adalah background consumer enterprise berbasis *
 
 Berikut adalah implementasi listener ganda pada `template-worker-java`:
 
-### 1. RabbitMQ Consumer (`MessageConsumer.java`)
-Aktif saat `message.broker=rabbitmq` (default):
+### 1. RabbitMQ Consumer Loop
+
+Aktif secara otomatis saat `message.broker=rabbitmq` (default):
 
 ```java title="src/main/java/com/example/template/workerjava/consumer/MessageConsumer.java"
-package com.example.template.workerjava.consumer;
-
-import com.example.template.workerjava.model.Message;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
-
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -56,25 +48,17 @@ public class MessageConsumer {
             log.info("Message processed successfully: {}", message.getId());
         } catch (Exception e) {
             log.error("Error processing message: {}", message.getId(), e);
-            throw e; // Memicu retry policy atau DLQ
+            throw e; // Memicu retry policy atau Dead Letter Queue
         }
     }
 }
 ```
 
-### 2. Kafka Consumer (`KafkaMessageConsumer.java`)
-Aktif saat `message.broker=kafka`:
+### 2. Apache Kafka Consumer Loop
+
+Aktif secara otomatis saat konfigurasi `message.broker=kafka`:
 
 ```java title="src/main/java/com/example/template/workerjava/consumer/KafkaMessageConsumer.java"
-package com.example.template.workerjava.consumer;
-
-import com.example.template.workerjava.model.Message;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.stereotype.Component;
-
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -101,9 +85,35 @@ public class KafkaMessageConsumer {
 }
 ```
 
+### 3. Sinyal OS & Graceful Shutdown
+
+Spring Boot mengelola shutdown hook secara otomatis (`SIGINT` dan `SIGTERM`). Listener container menghentikan pengambilan pesan baru, menyelesaikan transaksi yang sedang berjalan hingga batas timeout, lalu menutup koneksi connection factory:
+
+```properties title="application.properties"
+# Graceful shutdown Spring Boot lifecycle
+server.shutdown=graceful
+spring.lifecycle.timeout-per-shutdown-phase=20s
+```
+
 ---
 
-## ⚙️ Variabel Konfigurasi (`application.properties`)
+## 📦 Skema Pesan Standar (Message Payload)
+
+```java title="src/main/java/com/example/template/workerjava/model/Message.java"
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class Message implements Serializable {
+    private String id;
+    private String content;
+    private String type;
+    private Long timestamp;
+}
+```
+
+---
+
+## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```properties title="src/main/resources/application.properties"
 spring.application.name=worker-java

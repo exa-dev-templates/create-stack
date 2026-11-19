@@ -1,45 +1,34 @@
 ---
 title: Rust Worker Template
-description: Asynchronous RabbitMQ (lapin) & Apache Kafka (rskafka) consumer built with Rust and Tokio runtime for maximum throughput and reliability
+description: Asynchronous RabbitMQ (lapin) & Apache Kafka (rskafka) consumer powered by Rust and Tokio runtime with absolute reliability and speed
 ---
 
-The `template-worker-rust` template is an ultra-high throughput background queue consumer written in **Rust 2021**, utilizing native asynchronous libraries **Lapin** (AMQP 0.9.1) and **RsKafka** (Apache Kafka) on top of the **Tokio** runtime.
+The `template-worker-rust` template is a high-performance background queue consumer built in **Rust 2021**, leveraging native asynchronous **Lapin** (AMQP 0.9.1) and **RsKafka** (Apache Kafka) drivers on top of the **Tokio** multi-threaded runtime.
 
 ---
 
 ## ✨ Core Architectural Features
 
-- **Dual Broker Drivers (`MESSAGE_BROKER=rabbitmq|kafka`)**: Dynamically swaps between RabbitMQ or Apache Kafka consumption pipelines without recompilation.
-- **Pure Tokio Async Runtime**: Entire consumer I/O loop runs non-blocking with exceptional concurrency and a tiny memory footprint (< 15 MB).
-- **QoS Prefetch & Fair Dispatch**: Enforces `basic_qos` limits on RabbitMQ channels to prevent memory ballooning under load.
+- **Dual Broker Driver (`MESSAGE_BROKER=rabbitmq|kafka`)**: Dynamically select between RabbitMQ or Apache Kafka consumer drivers without recompilation.
+- **Pure Tokio Async Runtime**: All messaging I/O operations execute non-blockingly with efficient concurrency and an ultra-low memory footprint (< 15 MB).
+- **QoS Prefetch & Fair Dispatch**: Enforces explicit channel `basic_qos` limits on RabbitMQ to prevent memory spikes.
 - **Manual Acknowledgment & Error Handling**:
-  - `delivery.ack(BasicAckOptions::default())` invoked strictly when task processing completes successfully.
-  - `delivery.nack(BasicNackOptions { requeue: false, .. })` delegates poisoned messages to Dead Letter Exchanges (DLX).
-- **Tokio Select Graceful Shutdown**: Leverages `tokio::sync::broadcast` channels connected to OS termination signals (`SIGINT`/`SIGTERM`) to halt message processing smoothly without data loss.
-- **Structured JSON Logging**: `tracing` + `tracing-subscriber` outputs structured JSON logs per event (raw `println!` and `eprintln!` are forbidden).
+  - `delivery.ack(BasicAckOptions::default())` is called strictly after successful task execution.
+  - `delivery.nack(BasicNackOptions { requeue: false, .. })` diverts corrupted payloads to a Dead Letter Exchange (DLX).
+- **Tokio Select Graceful Shutdown**: Uses `tokio::sync::broadcast` triggered by OS termination signals (`SIGINT`/`SIGTERM`) to halt message consumption loops without dropping in-flight tasks.
+- **Structured JSON Logging**: `tracing` + `tracing-subscriber` emit structured JSON log events (strictly zero `println!` or `eprintln!`).
 
 ---
 
 ## ⚡ Consumer Implementation & Handlers
 
-RabbitMQ consuming loop and shutdown orchestration in `src/consumer/worker.rs`:
+Here is the consumer implementation in the Rust worker template:
+
+### 1. RabbitMQ Consumer Loop
+
+RabbitMQ consumption loop with manual Ack/Nack in `src/consumer/worker.rs`:
 
 ```rust title="src/consumer/worker.rs"
-use futures_util::StreamExt;
-use lapin::{
-    message::Delivery,
-    options::{BasicAckOptions, BasicConsumeOptions, BasicNackOptions},
-    types::FieldTable,
-    Channel,
-};
-use tokio::sync::broadcast;
-use tracing::{error, info, warn};
-
-use crate::{
-    config::WorkerConfig,
-    consumer::task::{process_task, TaskMessage},
-};
-
 pub async fn start_consumer(
     channel: Channel,
     config: WorkerConfig,
@@ -96,7 +85,9 @@ async fn handle_delivery(delivery: &Delivery) {
 }
 ```
 
-Kafka consuming loop in `src/consumer/kafka_worker.rs`:
+### 2. Apache Kafka Consumer Loop
+
+Kafka consumer loop in `src/consumer/kafka_worker.rs`:
 
 ```rust title="src/consumer/kafka_worker.rs"
 pub async fn start_kafka_consumer(
@@ -134,23 +125,50 @@ pub async fn start_kafka_consumer(
 }
 ```
 
+### 3. OS Signals & Graceful Shutdown
+
+Using Tokio OS signal handling (`tokio::signal::ctrl_c()`) and broadcast channels to safely notify all worker tasks before shutdown:
+
+```rust title="src/main.rs"
+tokio::select! {
+    _ = tokio::signal::ctrl_c() => {
+        info!("Termination signal intercepted. Broadcasting shutdown to worker tasks...");
+        let _ = shutdown_tx.send(());
+    }
+}
+```
+
 ---
 
-## ⚙️ Environment Variables (`.env`)
+## 📦 Standard Message Payload Schema
+
+```rust title="src/consumer/task.rs"
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TaskMessage {
+    pub id: String,
+    pub task_type: String,
+    pub payload: serde_json::Value,
+    pub created_at: String,
+}
+```
+
+---
+
+## ⚙️ Environment Variables & Configuration
 
 ```ini title=".env"
-# Driver Selection: rabbitmq or kafka
+# Selected Driver: rabbitmq or kafka
 MESSAGE_BROKER=rabbitmq
 LOG_LEVEL=info
 
-# RabbitMQ Configuration
+# RabbitMQ Settings
 AMQP_URL=amqp://guest:guest@localhost:5672/%2f
 QUEUE_NAME=worker_rust_queue
 EXCHANGE_NAME=worker_rust_exchange
 ROUTING_KEY=worker_rust_key
 PREFETCH_COUNT=10
 
-# Apache Kafka Configuration
+# Apache Kafka Settings
 KAFKA_BROKERS=localhost:9092
 KAFKA_TOPIC=app.events
 KAFKA_GROUP_ID=worker-rust-group
@@ -163,7 +181,7 @@ KAFKA_GROUP_ID=worker-rust-group
 ```bash title="Terminal"
 cd template-worker-rust
 
-# Verify compilation and linting
+# Validate compilation and lints
 cargo check
 
 # Run main worker
@@ -172,9 +190,9 @@ cargo run
 # Run with Apache Kafka driver
 MESSAGE_BROKER=kafka cargo run
 
-# Run publisher test simulation
+# Run simulated publisher binary
 cargo run --bin test_publisher
 
-# Build optimized release binary
+# Build optimized production binary
 cargo build --release
 ```
