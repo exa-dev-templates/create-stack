@@ -19,6 +19,7 @@ async function scaffoldFullstackProject(options) {
     backend,
     worker,
     database = 'postgres',
+    messageBroker = 'both',
     createEnv = true,
     initGit = true
   } = options;
@@ -75,10 +76,10 @@ async function scaffoldFullstackProject(options) {
   }
 
   // 5. Generate docker-compose.infra.yml
-  await generateDockerComposeInfra(targetDir, { database, backend, worker });
+  await generateDockerComposeInfra(targetDir, { database, backend, worker, messageBroker });
 
   // 6. Generate Root README.md
-  await generateRootReadme(targetDir, projectName, installedServices);
+  await generateRootReadme(targetDir, projectName, installedServices, { messageBroker });
 
   // 7. Generate Root .gitignore
   await generateRootGitignore(targetDir);
@@ -144,7 +145,7 @@ async function scaffoldSingleProject(options) {
  * Generates docker-compose.infra.yml for backend & worker infrastructure
  */
 async function generateDockerComposeInfra(targetDir, options = {}) {
-  const { database = 'postgres', backend, worker } = options;
+  const { database = 'postgres', backend, worker, messageBroker = 'both' } = options;
   if (!backend && !worker) return;
 
   const isMysql = database === 'mysql';
@@ -195,23 +196,12 @@ async function generateDockerComposeInfra(targetDir, options = {}) {
     volumes += '  postgres_data:\n';
   }
 
-  const composeContent = `services:
-${dbService}
-  redis:
-    image: redis:7-alpine
-    container_name: \${COMPOSE_PROJECT_NAME:-app}_redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+  let brokerServices = '';
+  const includeRabbit = messageBroker === 'rabbitmq' || messageBroker === 'both';
+  const includeKafka = messageBroker === 'kafka' || messageBroker === 'both';
 
-  rabbitmq:
+  if (includeRabbit) {
+    brokerServices += `  rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: \${COMPOSE_PROJECT_NAME:-app}_rabbitmq
     restart: unless-stopped
@@ -229,7 +219,65 @@ ${dbService}
       timeout: 5s
       retries: 5
 
-  mailpit:
+`;
+    volumes += '  rabbitmq_data:\n';
+  }
+
+  if (includeKafka) {
+    brokerServices += `  kafka:
+    image: apache/kafka:3.7.0
+    container_name: \${COMPOSE_PROJECT_NAME:-app}_kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: \${COMPOSE_PROJECT_NAME:-app}_kafka_ui
+    restart: unless-stopped
+    ports:
+      - "8085:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      - kafka
+
+`;
+    volumes += '  kafka_data:\n';
+  }
+
+  const composeContent = `services:
+${dbService}  redis:
+    image: redis:7-alpine
+    container_name: \${COMPOSE_PROJECT_NAME:-app}_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+${brokerServices}  mailpit:
     image: axllent/mailpit:latest
     container_name: \${COMPOSE_PROJECT_NAME:-app}_mailpit
     restart: unless-stopped
@@ -239,7 +287,6 @@ ${dbService}
 
 volumes:
 ${volumes}  redis_data:
-  rabbitmq_data:
 `;
 
   await fs.writeFile(path.join(targetDir, 'docker-compose.infra.yml'), composeContent, 'utf8');
@@ -248,7 +295,8 @@ ${volumes}  redis_data:
 /**
  * Creates root README.md for fullstack projects
  */
-async function generateRootReadme(targetDir, projectName, services) {
+async function generateRootReadme(targetDir, projectName, services, options = {}) {
+  const { messageBroker = 'both' } = options;
   let content = `# ${projectName}\n\n`;
   content += `> Fullstack project scaffolded via **Create Stack CLI**\n\n`;
   content += `## 🏗️ Architecture Overview\n\n`;
@@ -268,9 +316,15 @@ async function generateRootReadme(targetDir, projectName, services) {
   }
 
   content += `## 🐳 Local Infrastructure (Docker Compose)\n\n`;
-  content += `Start all backing services (Database, Redis, RabbitMQ, Mailpit) with a single command:\n\n`;
-  content += `\`\`\`bash\nnpm run infra:up    # Start DB, Redis, RabbitMQ & Mailpit\nnpm run infra:logs  # View logs\nnpm run infra:down  # Stop infrastructure\n\`\`\`\n\n`;
-  content += `- **RabbitMQ Management Dashboard:** [http://localhost:15672](http://localhost:15672) (User/Pass: \`guest\` / \`guest\`)\n`;
+  content += `Start all backing services (Database, Redis, Message Brokers, Mailpit) with a single command:\n\n`;
+  content += `\`\`\`bash\nnpm run infra:up    # Start backing infrastructure\nnpm run infra:logs  # View logs\nnpm run infra:down  # Stop infrastructure\n\`\`\`\n\n`;
+  if (messageBroker === 'kafka' || messageBroker === 'both') {
+    content += `- **Kafka UI Dashboard:** [http://localhost:8085](http://localhost:8085)\n`;
+    content += `- **Kafka Broker:** \`localhost:9092\`\n`;
+  }
+  if (messageBroker === 'rabbitmq' || messageBroker === 'both') {
+    content += `- **RabbitMQ Management Dashboard:** [http://localhost:15672](http://localhost:15672) (User/Pass: \`guest\` / \`guest\`)\n`;
+  }
   content += `- **Mailpit Webmail UI:** [http://localhost:8025](http://localhost:8025)\n\n`;
 
   content += `## 🚀 Quick Start Guide\n\n`;

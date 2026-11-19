@@ -173,6 +173,29 @@ async function runInteractiveWizard(cliArgs = {}) {
       }
     }
 
+    // E. Message Broker Choice (if Backend or Worker was chosen)
+    let messageBroker = 'both';
+    if (chosenBeId !== 'none' || chosenWorkerId !== 'none') {
+      if (cliArgs.broker && ['rabbitmq', 'kafka', 'both', 'none'].includes(cliArgs.broker.toLowerCase())) {
+        messageBroker = cliArgs.broker.toLowerCase();
+      } else {
+        messageBroker = await p.select({
+          message: 'Pilih Message Broker / Event Streaming:',
+          options: [
+            { value: 'both', label: '🐰 + ⚡ Both (RabbitMQ + Apache Kafka)', hint: 'Rekomendasi fleksibel' },
+            { value: 'rabbitmq', label: '🐰 RabbitMQ 3', hint: 'AMQP queue & RPC lightweight' },
+            { value: 'kafka', label: '⚡ Apache Kafka (KRaft)', hint: 'Distributed event streaming' },
+            { value: 'none', label: '🚫 Tanpa Message Broker', hint: 'Nonaktifkan messaging' }
+          ],
+          initialValue: 'both'
+        });
+        if (p.isCancel(messageBroker)) {
+          p.cancel('Operasi dibatalkan.');
+          process.exit(0);
+        }
+      }
+    }
+
     // Extra options
     const createEnv = await p.confirm({
       message: 'Generate file .env otomatis dari .env.example?',
@@ -200,6 +223,7 @@ async function runInteractiveWizard(cliArgs = {}) {
       backend: allTemplates.backend.find(t => t.id === chosenBeId) || null,
       worker: allTemplates.worker.find(t => t.id === chosenWorkerId) || null,
       database,
+      messageBroker,
       createEnv,
       initGit
     };
@@ -258,6 +282,28 @@ async function runInteractiveWizard(cliArgs = {}) {
       }
     }
 
+    let messageBroker = 'both';
+    if (category === 'backend' || category === 'worker') {
+      if (cliArgs.broker && ['rabbitmq', 'kafka', 'both', 'none'].includes(cliArgs.broker.toLowerCase())) {
+        messageBroker = cliArgs.broker.toLowerCase();
+      } else {
+        messageBroker = await p.select({
+          message: 'Pilih Message Broker / Event Streaming:',
+          options: [
+            { value: 'both', label: '🐰 + ⚡ Both (RabbitMQ + Apache Kafka)', hint: 'Rekomendasi fleksibel' },
+            { value: 'rabbitmq', label: '🐰 RabbitMQ 3', hint: 'AMQP queue & RPC lightweight' },
+            { value: 'kafka', label: '⚡ Apache Kafka (KRaft)', hint: 'Distributed event streaming' },
+            { value: 'none', label: '🚫 Tanpa Message Broker', hint: 'Nonaktifkan messaging' }
+          ],
+          initialValue: 'both'
+        });
+        if (p.isCancel(messageBroker)) {
+          p.cancel('Operasi dibatalkan.');
+          process.exit(0);
+        }
+      }
+    }
+
     const createEnv = await p.confirm({
       message: 'Generate file .env otomatis dari .env.example?',
       initialValue: true
@@ -282,6 +328,7 @@ async function runInteractiveWizard(cliArgs = {}) {
       targetDir,
       template,
       database,
+      messageBroker,
       createEnv,
       initGit
     };

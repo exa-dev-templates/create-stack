@@ -149,9 +149,12 @@ async function runTests() {
     assert(infraCompose.includes('mysql:8.4'), 'docker-compose.infra.yml must contain mysql:8.4');
     assert(infraCompose.includes('redis:7-alpine'), 'docker-compose.infra.yml must contain redis:7-alpine');
     assert(infraCompose.includes('rabbitmq:3-management-alpine'), 'docker-compose.infra.yml must contain rabbitmq');
+    assert(infraCompose.includes('apache/kafka:3.7.0'), 'docker-compose.infra.yml must contain apache/kafka:3.7.0');
+    assert(infraCompose.includes('provectuslabs/kafka-ui'), 'docker-compose.infra.yml must contain kafka-ui');
     assert(rootPkg.scripts['infra:up'], 'package.json must contain infra:up script');
     assert(rootPkg.scripts['dev:all'], 'package.json must contain dev:all script');
     assert(rootReadme.includes('MySQL 8.4'), 'Root README must display MySQL 8.4');
+    assert(rootReadme.includes('http://localhost:8085'), 'Root README must mention Kafka UI');
     assert(beEnv.includes('3306'), 'Backend .env must have port 3306');
     assert(fePkg.name.includes('my-fullstack-app'), 'Frontend package name must be updated');
     assert(workerMod.includes('my-fullstack-app-worker'), 'Worker go.mod must be updated');
