@@ -19,32 +19,64 @@ The `template-java` starter kit is an enterprise-grade backend template built wi
 
 ---
 
-## ⚡ Transaction Implementation Pattern
+## ⚡ Real-World Transaction Pattern (`@Transactional` Declarative Boundaries)
 
-Transactions are managed declaratively using Spring's transaction boundary:
+Per monorepo standard (`database-transactions.md`), database transactions are declared using Spring AOP `@Transactional`. There is an explicit separation between mutations (automatic rollback on uncaught exceptions) and read operations (`readOnly = true`) to optimize Hibernate dirty-checking performance:
 
-```java title="src/main/java/com/app/service/UserService.java"
+```java title="src/main/java/com/example/template/java/user/service/UserService.java"
+package com.example.template.java.user.service;
+
+import com.example.template.java.common.constant.ApiCode;
+import com.example.template.java.common.exception.BusinessException;
+import com.example.template.java.user.dto.UserRequest;
+import com.example.template.java.user.model.User;
+import com.example.template.java.user.repository.UserRepository;
+import java.util.Optional;
+import lombok.extern.slf4j.Slf4j;
+import org.mindrot.jbcrypt.BCrypt;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Slf4j
 @Service
-@RequiredArgsConstructor
 public class UserService {
 
-    private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
+  private final UserRepository userRepository;
 
-    @Transactional
-    public UserResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new BusinessException(ErrorCode.EMAIL_ALREADY_EXISTS, "Email is already registered");
-        }
+  public UserService(UserRepository userRepository) {
+    this.userRepository = userRepository;
+  }
 
-        User user = User.builder()
-                .email(request.getEmail())
-                .password(passwordEncoder.encode(request.getPassword()))
-                .build();
+  // Mutation: Automatic rollback on runtime exception or BusinessException
+  @Transactional
+  public User createUser(UserRequest request) {
+    log.info("Creating new user: {}", request.getUsername());
 
-        user = userRepository.save(user);
-        return UserResponse.from(user);
+    if (userRepository.findByUsername(request.getUsername()).isPresent()) {
+      throw new BusinessException("Username already exists", ApiCode.USER_ALREADY_EXISTS, 409);
     }
+    if (userRepository.findByEmail(request.getEmail()).isPresent()) {
+      throw new BusinessException("Email already exists", ApiCode.EMAIL_ALREADY_EXISTS, 409);
+    }
+
+    User user = new User();
+    user.setUsername(request.getUsername());
+    user.setEmail(request.getEmail());
+    user.setPassword(BCrypt.hashpw(request.getPassword(), BCrypt.gensalt()));
+    user.setFullName(request.getFullName());
+    user.setRole(request.getRole() != null ? request.getRole() : "USER");
+    user.setIsActive(true);
+
+    User savedUser = userRepository.save(user);
+    log.info("User created successfully: {}", savedUser.getId());
+    return savedUser;
+  }
+
+  // Query: Optimized to skip Hibernate dirty-checking snapshots
+  @Transactional(readOnly = true)
+  public Optional<User> getUserById(Long id) {
+    return userRepository.findById(id);
+  }
 }
 ```
 

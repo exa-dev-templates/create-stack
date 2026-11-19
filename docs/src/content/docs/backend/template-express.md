@@ -21,35 +21,78 @@ Template `template-express` adalah starter kit REST API enterprise berbasis **No
 
 ---
 
-## ⚡ Contoh Implementasi Transaction
+## ⚡ Implementasi Transaksi Nyata (`withTransaction` & Pure Parameter Passing)
 
-Transaksi database dijalankan dengan pola eksplisit passing database client:
+Template `template-express` menggunakan helper transaksi `db.withTransaction` dan `db.withReadOnlyTransaction` yang mengontrol lifecycle koneksi pool client, query `BEGIN`, `COMMIT`, dan auto-`ROLLBACK` secara aman. Objek `client: PoolClient` dioper secara eksplisit ke setiap method repository:
 
-```typescript title="src/services/userService.ts"
-import { pool } from '../database';
-import { userRepository } from '../repositories/userRepository';
-import { AppError } from '../pkg/errors';
+```typescript title="src/modules/users/service.ts"
+import { Database } from '../../config/database'
+import { userRepository } from './repository'
+import { passwordService } from '../../pkg/auth/password'
+import { EmailAlreadyExistsError, ValidationError } from '../../pkg/errors'
+import type { CreateUserDTO, User } from './types'
 
 export class UserService {
-  async registerUser(dto: CreateUserDto) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+  /**
+   * Create a new user (dalam atomic database transaction)
+   */
+  async createUser (data: CreateUserDTO): Promise<User> {
+    const { name, email, password } = data
 
-      const existing = await userRepository.findByEmail(client, dto.email);
-      if (existing) {
-        throw new AppError('EMAIL_ALREADY_EXISTS', 'Email is already registered', 409);
+    if (!name || !email) {
+      throw new ValidationError('Name and email are required', { fields: ['name', 'email'] })
+    }
+
+    const db = Database.getInstance()
+    return await db.withTransaction(async (client) => {
+      // 1. Validasi keberadaan user menggunakan connection client transaksi
+      const existingUser = await userRepository.findByEmail(email, client)
+      if (existingUser) {
+        throw new EmailAlreadyExistsError('Email already exists', { field: 'email' })
       }
 
-      const user = await userRepository.create(client, dto);
-      await client.query('COMMIT');
-      return user;
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
+      let hashedPassword: string | undefined
+      if (password) {
+        hashedPassword = await passwordService.hash(password)
+      }
+
+      // 2. Oper client transaksi ke operasi penulisan repository
+      return await userRepository.create(
+        {
+          name,
+          email,
+          password: hashedPassword,
+          role: data.role
+        },
+        client
+      )
+    })
+  }
+}
+```
+
+Pada layer repository, query dieksekusi langsung pada objek `client`:
+
+```typescript title="src/modules/users/repository.ts"
+import type { PoolClient } from 'pg'
+import { BaseRepository } from '../../repositories/BaseRepository'
+import type { CreateUserDTO, User } from './types'
+
+class UserRepository extends BaseRepository<User> {
+  async create (data: CreateUserDTO, client?: PoolClient): Promise<User> {
+    const { name, email, password, role } = data
+    const sql = `INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING *`
+    const values = [name, email, password, role]
+
+    if (client) {
+      const result = await client.query(sql, values)
+      return result.rows[0] as User
     }
+
+    return await this.withTransaction(async (c) => {
+      const result = await c.query(sql, values)
+      return result.rows[0] as User
+    })
   }
 }
 ```

@@ -19,32 +19,64 @@ Template `template-java` adalah starter kit enterprise backend berbasis **Java 1
 
 ---
 
-## ⚡ Contoh Implementasi Transaction
+## ⚡ Implementasi Transaksi Nyata (`@Transactional` Declarative Boundaries)
 
-Transaksi database dikelola secara deklaratif menggunakan anotasi Spring:
+Sesuai aturan monorepo (`database-transactions.md`), transaksi database dikelola secara deklaratif menggunakan anotasi Spring AOP `@Transactional`. Terdapat pemisahan tegas antara mutasi data (otomatis rollback jika terjadi exception) dan operasi pembacaan (`readOnly = true`) untuk mengoptimalkan performa dirty-checking Hibernate:
 
-```java title="src/main/java/com/app/service/UserService.java"
+```java title="src/main/java/com/example/template/java/user/service/UserService.java"
+package com.example.template.java.user.service;
+
+import com.example.template.java.common.constant.ApiCode;
+import com.example.template.java.common.exception.BusinessException;
+import com.example.template.java.user.dto.UserRequest;
+import com.example.template.java.user.model.User;
+import com.example.template.java.user.repository.UserRepository;
+import java.util.Optional;
+import lombok.extern.slf4j.Slf4j;
+import org.mindrot.jbcrypt.BCrypt;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Slf4j
 @Service
-@RequiredArgsConstructor
 public class UserService {
 
-    private final UserRepository userRepository;
-    private final PasswordEncoder passwordEncoder;
+  private final UserRepository userRepository;
 
-    @Transactional
-    public UserResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new BusinessException(ErrorCode.EMAIL_ALREADY_EXISTS, "Email is already registered");
-        }
+  public UserService(UserRepository userRepository) {
+    this.userRepository = userRepository;
+  }
 
-        User user = User.builder()
-                .email(request.getEmail())
-                .password(passwordEncoder.encode(request.getPassword()))
-                .build();
+  // Operasi Mutasi: Rollback otomatis jika runtime exception / BusinessException
+  @Transactional
+  public User createUser(UserRequest request) {
+    log.info("Creating new user: {}", request.getUsername());
 
-        user = userRepository.save(user);
-        return UserResponse.from(user);
+    if (userRepository.findByUsername(request.getUsername()).isPresent()) {
+      throw new BusinessException("Username already exists", ApiCode.USER_ALREADY_EXISTS, 409);
     }
+    if (userRepository.findByEmail(request.getEmail()).isPresent()) {
+      throw new BusinessException("Email already exists", ApiCode.EMAIL_ALREADY_EXISTS, 409);
+    }
+
+    User user = new User();
+    user.setUsername(request.getUsername());
+    user.setEmail(request.getEmail());
+    user.setPassword(BCrypt.hashpw(request.getPassword(), BCrypt.gensalt()));
+    user.setFullName(request.getFullName());
+    user.setRole(request.getRole() != null ? request.getRole() : "USER");
+    user.setIsActive(true);
+
+    User savedUser = userRepository.save(user);
+    log.info("User created successfully: {}", savedUser.getId());
+    return savedUser;
+  }
+
+  // Operasi Pembacaan: Optimasi Hibernate bypass dirty-checking snapshot
+  @Transactional(readOnly = true)
+  public Optional<User> getUserById(Long id) {
+    return userRepository.findById(id);
+  }
 }
 ```
 

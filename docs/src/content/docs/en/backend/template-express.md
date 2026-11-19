@@ -21,35 +21,78 @@ The `template-express` starter kit is an enterprise REST API template built with
 
 ---
 
-## ⚡ Transaction Implementation Pattern
+## ⚡ Real-World Transaction Pattern (`withTransaction` & Pure Parameter Passing)
 
-Transactions are managed through explicit database client parameter passing:
+The `template-express` template employs `db.withTransaction` and `db.withReadOnlyTransaction` helpers managing connection lifecycle, `BEGIN`, `COMMIT`, and auto-`ROLLBACK`. The `client: PoolClient` instance is explicitly passed to repository methods:
 
-```typescript title="src/services/userService.ts"
-import { pool } from '../database';
-import { userRepository } from '../repositories/userRepository';
-import { AppError } from '../pkg/errors';
+```typescript title="src/modules/users/service.ts"
+import { Database } from '../../config/database'
+import { userRepository } from './repository'
+import { passwordService } from '../../pkg/auth/password'
+import { EmailAlreadyExistsError, ValidationError } from '../../pkg/errors'
+import type { CreateUserDTO, User } from './types'
 
 export class UserService {
-  async registerUser(dto: CreateUserDto) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+  /**
+   * Create a new user (within an atomic database transaction)
+   */
+  async createUser (data: CreateUserDTO): Promise<User> {
+    const { name, email, password } = data
 
-      const existing = await userRepository.findByEmail(client, dto.email);
-      if (existing) {
-        throw new AppError('EMAIL_ALREADY_EXISTS', 'Email is already registered', 409);
+    if (!name || !email) {
+      throw new ValidationError('Name and email are required', { fields: ['name', 'email'] })
+    }
+
+    const db = Database.getInstance()
+    return await db.withTransaction(async (client) => {
+      // 1. Verify user uniqueness using the active transactional client
+      const existingUser = await userRepository.findByEmail(email, client)
+      if (existingUser) {
+        throw new EmailAlreadyExistsError('Email already exists', { field: 'email' })
       }
 
-      const user = await userRepository.create(client, dto);
-      await client.query('COMMIT');
-      return user;
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
+      let hashedPassword: string | undefined
+      if (password) {
+        hashedPassword = await passwordService.hash(password)
+      }
+
+      // 2. Explicitly forward client to repository insertion
+      return await userRepository.create(
+        {
+          name,
+          email,
+          password: hashedPassword,
+          role: data.role
+        },
+        client
+      )
+    })
+  }
+}
+```
+
+At the repository layer, queries execute directly on the transactional `client`:
+
+```typescript title="src/modules/users/repository.ts"
+import type { PoolClient } from 'pg'
+import { BaseRepository } from '../../repositories/BaseRepository'
+import type { CreateUserDTO, User } from './types'
+
+class UserRepository extends BaseRepository<User> {
+  async create (data: CreateUserDTO, client?: PoolClient): Promise<User> {
+    const { name, email, password, role } = data
+    const sql = `INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING *`
+    const values = [name, email, password, role]
+
+    if (client) {
+      const result = await client.query(sql, values)
+      return result.rows[0] as User
     }
+
+    return await this.withTransaction(async (c) => {
+      const result = await c.query(sql, values)
+      return result.rows[0] as User
+    })
   }
 }
 ```

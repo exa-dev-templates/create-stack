@@ -19,33 +19,64 @@ Template `template-rust` adalah backend REST API berkinerja ultra-tinggi yang di
 
 ---
 
-## ⚡ Contoh Implementasi Transaction (Pure Parameter Passing)
+## ⚡ Implementasi Transaksi Nyata (Pure Parameter Passing `&mut Transaction`)
 
-Sesuai aturan monorepo (`database-transactions.md`), transaksi dioper murni via mutable reference:
+Sesuai aturan monorepo (`database-transactions.md`), transaksi dioper murni via mutable borrow `&mut Transaction<'_, Postgres>` tanpa menyembunyikan transaksi di dalam task-local storage. Service layer mengorkestrasikan atomisitas multi-repository:
 
-```rust title="src/services/user_service.rs"
-pub async fn register_user(
-    &self,
-    dto: RegisterUserDto,
-) -> Result<UserResponse, AppError> {
-    // 1. Mulai transaksi database
-    let mut tx = self.db_pool.begin().await.map_err(AppError::from)?;
+```rust title="src/modules/user/service.rs"
+use sqlx::{PgPool, Transaction, Postgres};
+use uuid::Uuid;
+use crate::{
+    modules::user::{
+        dto::{CreateUserRequest, UpdateUserRequest, UserResponse},
+        repository::{NewUser, UserRepository},
+    },
+    pkg::{auth::password::hash_password, errors::AppError},
+};
 
-    // 2. Oper transaksi secara eksplisit ke repository
-    let existing = self.user_repo.find_by_email(&mut tx, &dto.email).await?;
-    if existing.is_some() {
-        return Err(AppError::conflict(
-            constants::CODE_EMAIL_ALREADY_EXISTS,
-            "Email already registered",
-        ));
+impl UserService {
+    /// Update user dan cabut sesi aktif secara atomik jika user dinonaktifkan
+    pub async fn update_user(
+        &self,
+        id: Uuid,
+        req: UpdateUserRequest,
+    ) -> Result<UserResponse, AppError> {
+        // 1. Mulai transaksi database dari pool
+        let mut tx = self.pool.begin().await.map_err(AppError::Database)?;
+
+        // 2. Oper &mut tx secara eksplisit ke repository user
+        let updated_user = self.repo.update(&mut tx, id, &req).await?;
+
+        // 3. Cascading multi-repository: cabut seluruh token sesi jika akun dinonaktifkan
+        if let Some(false) = req.is_active {
+            self.auth_repo.revoke_all_user_tokens(&mut tx, id).await?;
+        }
+
+        // 4. Commit transaksi jika semua operasi sukses
+        tx.commit().await.map_err(AppError::Database)?;
+
+        Ok(updated_user)
     }
+}
+```
 
-    let user = self.user_repo.create(&mut tx, &dto).await?;
+Trait repository mewajibkan passing `&mut Transaction`:
 
-    // 3. Commit transaksi jika sukses
-    tx.commit().await.map_err(AppError::from)?;
+```rust title="src/modules/user/repository.rs"
+#[async_trait]
+pub trait UserRepository: Send + Sync {
+    async fn create(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        new_user: NewUser<'_>,
+    ) -> Result<UserResponse, AppError>;
 
-    Ok(user.into())
+    async fn update(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: Uuid,
+        req: &UpdateUserRequest,
+    ) -> Result<UserResponse, AppError>;
 }
 ```
 

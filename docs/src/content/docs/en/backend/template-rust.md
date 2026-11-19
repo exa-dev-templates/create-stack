@@ -19,33 +19,64 @@ The `template-rust` starter kit is an ultra-high performance REST API backend wr
 
 ---
 
-## ⚡ Transaction Implementation Pattern (Pure Parameter Passing)
+## ⚡ Real-World Transaction Pattern (Pure Parameter Passing `&mut Transaction`)
 
-Per monorepo standard (`database-transactions.md`), transactions are passed via mutable references:
+Per monorepo standard (`database-transactions.md`), transactions are passed purely via mutable borrow `&mut Transaction<'_, Postgres>` without hiding transactions inside task-local storage. The service layer orchestrates multi-repository atomic operations:
 
-```rust title="src/services/user_service.rs"
-pub async fn register_user(
-    &self,
-    dto: RegisterUserDto,
-) -> Result<UserResponse, AppError> {
-    // 1. Begin database transaction
-    let mut tx = self.db_pool.begin().await.map_err(AppError::from)?;
+```rust title="src/modules/user/service.rs"
+use sqlx::{PgPool, Transaction, Postgres};
+use uuid::Uuid;
+use crate::{
+    modules::user::{
+        dto::{CreateUserRequest, UpdateUserRequest, UserResponse},
+        repository::{NewUser, UserRepository},
+    },
+    pkg::{auth::password::hash_password, errors::AppError},
+};
 
-    // 2. Explicitly pass transaction to repository
-    let existing = self.user_repo.find_by_email(&mut tx, &dto.email).await?;
-    if existing.is_some() {
-        return Err(AppError::conflict(
-            constants::CODE_EMAIL_ALREADY_EXISTS,
-            "Email already registered",
-        ));
+impl UserService {
+    /// Updates a user profile and revokes sessions atomically if deactivated
+    pub async fn update_user(
+        &self,
+        id: Uuid,
+        req: UpdateUserRequest,
+    ) -> Result<UserResponse, AppError> {
+        // 1. Begin database transaction on the pool
+        let mut tx = self.pool.begin().await.map_err(AppError::Database)?;
+
+        // 2. Explicitly forward &mut tx to user repository
+        let updated_user = self.repo.update(&mut tx, id, &req).await?;
+
+        // 3. Multi-repository cascading: revoke active session tokens upon deactivation
+        if let Some(false) = req.is_active {
+            self.auth_repo.revoke_all_user_tokens(&mut tx, id).await?;
+        }
+
+        // 4. Commit transaction upon success
+        tx.commit().await.map_err(AppError::Database)?;
+
+        Ok(updated_user)
     }
+}
+```
 
-    let user = self.user_repo.create(&mut tx, &dto).await?;
+Repository traits enforce passing `&mut Transaction`:
 
-    // 3. Commit transaction on success
-    tx.commit().await.map_err(AppError::from)?;
+```rust title="src/modules/user/repository.rs"
+#[async_trait]
+pub trait UserRepository: Send + Sync {
+    async fn create(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        new_user: NewUser<'_>,
+    ) -> Result<UserResponse, AppError>;
 
-    Ok(user.into())
+    async fn update(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        id: Uuid,
+        req: &UpdateUserRequest,
+    ) -> Result<UserResponse, AppError>;
 }
 ```
 

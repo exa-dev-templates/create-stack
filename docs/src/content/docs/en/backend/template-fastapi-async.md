@@ -19,27 +19,82 @@ The `template-fastapi-async` starter kit is a high-throughput REST API backend b
 
 ---
 
-## ⚡ Transaction Implementation Pattern
+## ⚡ Real-World Transaction Pattern (`@transactional` & `AsyncSession`)
 
-Transactions are managed through explicit `AsyncSession` parameter passing:
+In `template-fastapi-async`, repository operations **never auto-commit** to guarantee consistency across multi-step flows. Transaction boundaries are managed declaratively via `@transactional` decorator at the router handler level (or explicitly via `async with session.begin()` / `await db.commit()`), while `db: AsyncSession` is explicitly passed through services and repositories:
 
-```python title="app/services/user_service.py"
+```python title="modules/users/routes.py"
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.repositories.user_repository import UserRepository
-from app.pkg.errors import AppError
+
+from lib.database import get_db
+from utils.decorators import transactional, read_only
+from core.responses import BaseResponse, success_response
+from modules.users.service import UserService
+from modules.users.schemas import UserCreate, UserResponse
+
+router = APIRouter(prefix="/users", tags=["Users"])
+
+@router.post("", response_model=BaseResponse[UserResponse], status_code=status.HTTP_201_CREATED)
+@transactional
+async def create_user(
+    user_data: UserCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Creates a new user within an automated transaction boundary.
+    @transactional automatically commits on success and rolls back on unhandled exceptions.
+    """
+    user_service = UserService(db)
+    user = await user_service.create_user(
+        email=user_data.email,
+        username=user_data.username,
+        password=user_data.password,
+        full_name=user_data.full_name,
+        role=user_data.role or "user"
+    )
+
+    return success_response(
+        message="User created successfully",
+        data=user,
+        code="USER_CREATED"
+    )
+```
+
+At the service layer ([modules/users/service.py](file:///Users/macbookair/develop/templates/template-fastapi-async/modules/users/service.py#L27-L85)), business logic validates state before invoking repository operations:
+
+```python title="modules/users/service.py"
+from sqlalchemy.ext.asyncio import AsyncSession
+from modules.users.repository import UserRepository
+from exceptions import ConflictException, DatabaseException
+from constants import EMAIL_ALREADY_EXISTS, USER_ALREADY_EXISTS, DATABASE_ERROR
 
 class UserService:
-    def __init__(self, user_repo: UserRepository):
-        self.user_repo = user_repo
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.user_repo = UserRepository(db)
 
-    async def register_user(self, session: AsyncSession, user_data: dict):
-        async with session.begin():
-            existing = await self.user_repo.find_by_email(session, user_data["email"])
-            if existing:
-                raise AppError(code="EMAIL_ALREADY_EXISTS", message="Email already registered", status_code=409)
+    async def create_user(self, email: str, username: str, password: str, full_name: str = None, role: str = "user"):
+        # 1. Verify existence within the active session
+        if await self.user_repo.user_exists(email=email):
+            raise ConflictException(message="User with this email already exists", code=EMAIL_ALREADY_EXISTS)
 
-            user = await self.user_repo.create(session, user_data)
-            return user
+        if await self.user_repo.user_exists(username=username):
+            raise ConflictException(message="User with this username already exists", code=USER_ALREADY_EXISTS)
+
+        # 2. Execute repository write (no internal auto-commit)
+        user = await self.user_repo.create(
+            email=email,
+            username=username,
+            password_hash=hash_password(password),
+            full_name=full_name,
+            role=role
+        )
+
+        if not user:
+            raise DatabaseException(message="Failed to create user", code=DATABASE_ERROR)
+
+        return user
 ```
 
 ---
