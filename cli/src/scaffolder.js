@@ -74,16 +74,19 @@ async function scaffoldFullstackProject(options) {
     }
   }
 
-  // 5. Generate Root README.md
+  // 5. Generate docker-compose.infra.yml
+  await generateDockerComposeInfra(targetDir, { database, backend, worker });
+
+  // 6. Generate Root README.md
   await generateRootReadme(targetDir, projectName, installedServices);
 
-  // 6. Generate Root .gitignore
+  // 7. Generate Root .gitignore
   await generateRootGitignore(targetDir);
 
-  // 7. Generate Root package.json for convenience runner scripts
+  // 8. Generate Root package.json for convenience runner scripts
   await generateRootPackageJson(targetDir, projectName, installedServices);
 
-  // 7. Git Init
+  // 9. Git Init
   let gitInitialized = false;
   if (initGit) {
     gitInitialized = initGitRepo(targetDir);
@@ -138,6 +141,111 @@ async function scaffoldSingleProject(options) {
 }
 
 /**
+ * Generates docker-compose.infra.yml for backend & worker infrastructure
+ */
+async function generateDockerComposeInfra(targetDir, options = {}) {
+  const { database = 'postgres', backend, worker } = options;
+  if (!backend && !worker) return;
+
+  const isMysql = database === 'mysql';
+
+  let dbService = '';
+  let volumes = '';
+
+  if (isMysql) {
+    dbService = `  mysql:
+    image: mysql:8.4
+    container_name: \${COMPOSE_PROJECT_NAME:-app}_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: app_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+`;
+    volumes += '  mysql_data:\n';
+  } else {
+    dbService = `  postgres:
+    image: postgres:16-alpine
+    container_name: \${COMPOSE_PROJECT_NAME:-app}_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: app_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+`;
+    volumes += '  postgres_data:\n';
+  }
+
+  const composeContent = `services:
+${dbService}
+  redis:
+    image: redis:7-alpine
+    container_name: \${COMPOSE_PROJECT_NAME:-app}_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: \${COMPOSE_PROJECT_NAME:-app}_rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: \${COMPOSE_PROJECT_NAME:-app}_mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+volumes:
+${volumes}  redis_data:
+  rabbitmq_data:
+`;
+
+  await fs.writeFile(path.join(targetDir, 'docker-compose.infra.yml'), composeContent, 'utf8');
+}
+
+/**
  * Creates root README.md for fullstack projects
  */
 async function generateRootReadme(targetDir, projectName, services) {
@@ -158,6 +266,12 @@ async function generateRootReadme(targetDir, projectName, services) {
     }
     content += `\n`;
   }
+
+  content += `## 🐳 Local Infrastructure (Docker Compose)\n\n`;
+  content += `Start all backing services (Database, Redis, RabbitMQ, Mailpit) with a single command:\n\n`;
+  content += `\`\`\`bash\nnpm run infra:up    # Start DB, Redis, RabbitMQ & Mailpit\nnpm run infra:logs  # View logs\nnpm run infra:down  # Stop infrastructure\n\`\`\`\n\n`;
+  content += `- **RabbitMQ Management Dashboard:** [http://localhost:15672](http://localhost:15672) (User/Pass: \`guest\` / \`guest\`)\n`;
+  content += `- **Mailpit Webmail UI:** [http://localhost:8025](http://localhost:8025)\n\n`;
 
   content += `## 🚀 Quick Start Guide\n\n`;
 
@@ -211,10 +325,23 @@ npm-debug.log*
 async function generateRootPackageJson(targetDir, projectName, services) {
   const scripts = {};
 
+  // Infrastructure lifecycle scripts
+  if (await fs.pathExists(path.join(targetDir, 'docker-compose.infra.yml'))) {
+    scripts['infra:up'] = 'docker compose -f docker-compose.infra.yml up -d';
+    scripts['infra:down'] = 'docker compose -f docker-compose.infra.yml down';
+    scripts['infra:logs'] = 'docker compose -f docker-compose.infra.yml logs -f';
+  }
+
+  const devNames = [];
+  const devCommands = [];
+  const colorPalette = ['cyan', 'magenta', 'yellow', 'blue'];
+
   for (const s of services) {
     if (s.role === 'Frontend') {
       scripts['dev:fe'] = `cd ${s.folder} && npm run dev`;
       scripts['build:fe'] = `cd ${s.folder} && npm run build`;
+      devNames.push('fe');
+      devCommands.push('"npm run dev:fe"');
     } else if (s.role === 'Backend') {
       if (s.info.id === 'template-express') {
         scripts['dev:be'] = `cd ${s.folder} && npm run dev`;
@@ -224,12 +351,33 @@ async function generateRootPackageJson(targetDir, projectName, services) {
         scripts['dev:be'] = `cd ${s.folder} && uvicorn app:app --reload`;
       } else if (s.info.id === 'template-java') {
         scripts['dev:be'] = `cd ${s.folder} && ./mvnw spring-boot:run`;
+      } else if (s.info.id === 'template-rust') {
+        scripts['dev:be'] = `cd ${s.folder} && cargo run`;
       }
+      devNames.push('be');
+      devCommands.push('"npm run dev:be"');
     } else if (s.role === 'Worker') {
       if (s.info.id === 'template-worker-typescript') {
         scripts['dev:worker'] = `cd ${s.folder} && npm run dev`;
+      } else if (s.info.id === 'template-worker-golang') {
+        scripts['dev:worker'] = `cd ${s.folder} && go run main.go`;
+      } else if (s.info.id === 'template-worker-python') {
+        scripts['dev:worker'] = `cd ${s.folder} && python worker.py`;
+      } else if (s.info.id === 'template-worker-rust') {
+        scripts['dev:worker'] = `cd ${s.folder} && cargo run`;
+      } else if (s.info.id === 'template-worker-java') {
+        scripts['dev:worker'] = `cd ${s.folder} && ./mvnw spring-boot:run`;
       }
+      devNames.push('worker');
+      devCommands.push('"npm run dev:worker"');
     }
+  }
+
+  // dev:all orchestrator when multiple runnable services exist
+  if (devCommands.length > 1) {
+    const nameStr = devNames.join(',');
+    const colorStr = colorPalette.slice(0, devNames.length).join(',');
+    scripts['dev:all'] = `concurrently -n "${nameStr}" -c "${colorStr}" ${devCommands.join(' ')}`;
   }
 
   const rootPkg = {
@@ -237,7 +385,10 @@ async function generateRootPackageJson(targetDir, projectName, services) {
     version: '0.1.0',
     private: true,
     description: `Root workspace for ${projectName}`,
-    scripts
+    scripts,
+    devDependencies: {
+      concurrently: '^9.1.2'
+    }
   };
 
   await fs.writeJson(path.join(targetDir, 'package.json'), rootPkg, { spaces: 2 });

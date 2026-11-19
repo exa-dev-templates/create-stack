@@ -15,7 +15,10 @@
     "create": "node ./cli/bin/create-app.js",
     "start": "node ./cli/bin/create-app.js",
     "test:cli": "node ./cli/test/test-scaffold.js",
-    "audit:all": "osv-scanner scan -r ."
+    "audit:all": "osv-scanner scan -r .",
+    "infra:up": "docker compose -f docker-compose.infra.yml up -d",
+    "infra:down": "docker compose -f docker-compose.infra.yml down",
+    "infra:logs": "docker compose -f docker-compose.infra.yml logs -f"
   },
   "keywords": [
     "cli",

@@ -141,6 +141,16 @@ async function runTests() {
     const hasReactAuthModule = await fs.pathExists(path.join(fullstackTarget, 'frontend/src/modules/auth/index.ts'));
     const hasReactUsersModule = await fs.pathExists(path.join(fullstackTarget, 'frontend/src/modules/users/index.ts'));
     const hasReactDashboardModule = await fs.pathExists(path.join(fullstackTarget, 'frontend/src/modules/dashboard/index.ts'));
+    const hasInfraCompose = await fs.pathExists(path.join(fullstackTarget, 'docker-compose.infra.yml'));
+    const infraCompose = await fs.readFile(path.join(fullstackTarget, 'docker-compose.infra.yml'), 'utf8');
+    const rootPkg = await fs.readJson(path.join(fullstackTarget, 'package.json'));
+
+    assert(hasInfraCompose, 'Fullstack project must generate docker-compose.infra.yml');
+    assert(infraCompose.includes('mysql:8.4'), 'docker-compose.infra.yml must contain mysql:8.4');
+    assert(infraCompose.includes('redis:7-alpine'), 'docker-compose.infra.yml must contain redis:7-alpine');
+    assert(infraCompose.includes('rabbitmq:3-management-alpine'), 'docker-compose.infra.yml must contain rabbitmq');
+    assert(rootPkg.scripts['infra:up'], 'package.json must contain infra:up script');
+    assert(rootPkg.scripts['dev:all'], 'package.json must contain dev:all script');
     assert(rootReadme.includes('MySQL 8.4'), 'Root README must display MySQL 8.4');
     assert(beEnv.includes('3306'), 'Backend .env must have port 3306');
     assert(fePkg.name.includes('my-fullstack-app'), 'Frontend package name must be updated');

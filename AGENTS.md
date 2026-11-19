@@ -42,6 +42,11 @@ Repositori ini adalah kumpulan template arsitektur standar untuk backend (Expres
 - ❌ **DILARANG WILDCARD IMPORT**: Dilarang menggunakan wildcard (`from x import *`, `import java.util.*`). Semua simbol wajib diimpor secara eksplisit agar mudah di-trace.
 - **IKUTI BEST PRACTICE RESMI**: Dilarang mengarang konvensi import sendiri (*jangan ngide*). Wajib ikuti pengelompokan baku yang telah ditentukan aturan (Standard Library -> Third Party -> Internal Application Modules).
 
+### G. Standardisasi Dokumentasi API & OpenAPI 3.0 (Rules: `.agents/rules/api-documentation.md`)
+- **WAJIB INTERACTIVE SWAGGER & OPENAPI 3.0**: Setiap service backend (`template-express`, `template-fastapi-async`, `template-golang`, `template-java`, `template-rust`) **WAJIB** menyajikan dokumentasi interaktif di `/docs` (atau `/swagger-ui.html` di Java) dan skema raw di `/docs/openapi.json` (atau `/v3/api-docs` / `/openapi.json`).
+- ❌ **DILARANG ENDPOINT TANPA DOKUMENTASI**: Dilarang menambahkan modul atau endpoint API baru tanpa mendaftarkannya ke dalam skema OpenAPI (tags, summary, request body schema, auth requirements, dan standard response `ApiResponse<T>`).
+- Dokumentasi wajib selalu sinkron dengan kode aktual backend untuk mencegah *documentation drift*.
+
 ---
 
 ## 2. Struktur Template & Lokasi Modul
