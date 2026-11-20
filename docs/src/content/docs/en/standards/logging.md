@@ -53,3 +53,24 @@ Logs **MUST NEVER** leak secret or personally identifiable credentials:
 - Tokens (JWT access/refresh tokens)
 - Credit card PANs / CVVs
 - PINs and OTP codes
+
+---
+
+## 🧵 Request Context & Correlation ID Propagation
+
+Every backend service must enforce thread-safe asynchronous request context isolation:
+
+1. **`X-Request-ID` Header**:
+   - If the client transmits `X-Request-ID`, sanitize and preserve it (enforcing max length).
+   - If omitted, generate a fresh UUID v4.
+   - The ID **must** be echoed back via the `X-Request-ID` response header.
+   - It must be attached to the `requestId` attribute in the JSON envelope (`BaseResponse`).
+2. **Asynchronous Context Storage**:
+   - **Express**: Node.js `AsyncLocalStorage` (`src/utils/requestContext.ts`).
+   - **FastAPI**: Python `contextvars.ContextVar` (`lib/logger.py`).
+   - **Go Fiber**: Go `context.Context` (`pkg/logging/fiber.go`).
+   - **Java**: SLF4J `MDC` via `ThreadLocal` (`common/filter/RequestIdFilter.java`).
+   - **Rust**: `tower_http::request_id` and `tracing::Span` extensions (`src/pkg/logging/middleware.rs`).
+3. **Distributed Correlation & OpenTelemetry**:
+   - When tracing is enabled (`OTEL_ENABLED=true`), W3C TraceContext headers (`traceparent`) propagate across HTTP calls and message queues (RabbitMQ / Kafka).
+   - Structured log outputs automatically include `traceId` and `spanId`.
