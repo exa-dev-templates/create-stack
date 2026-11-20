@@ -175,3 +175,96 @@ let app = Router::new()
         idempotency_layer(idempotency_store.clone(), req, next)
     }));
 ```
+
+---
+
+## 🌐 Frontend Implementation (`template-react` & `template-vue`)
+
+On the client side, blindly auto-generating an `Idempotency-Key` on every single mutating HTTP request (`POST`/`PUT`/`PATCH`) is an **anti-pattern** because:
+1. **Retry Failures:** If a network failure occurs when submitting a form and the user clicks "Retry", the retry request **must reuse the exact same key** so the server recognizes the idempotent replay or ongoing lock rather than generating duplicate mutations.
+2. **Non-Critical Endpoints:** Lightweight mutation requests (e.g., telemetry, analytics, search tracking) do not warrant distributed locking overhead in Redis.
+
+Thus, both frontend templates implement a **declarative opt-in pattern with lifecycle-aware hooks/composables**:
+
+### 1. Zero-Bloat Key Generator (`src/utils/idempotency.ts`)
+Uses the browser's native Web Crypto API (`crypto.randomUUID()` with a cryptographically secure fallback using `crypto.getRandomValues()`), without external packages (0 bloat):
+
+```typescript
+import { generateIdempotencyKey } from '@/utils'
+
+const key = generateIdempotencyKey() // "550e8400-e29b-41d4-a716-446655440000"
+```
+
+### 2. Axios Request Config & Interceptor (`src/api/client.ts`)
+Integrated directly into the Axios client and interceptors:
+
+```typescript
+// Option A: Automatically generate a fresh UUID key
+await api.post('/api/orders', orderData, { idempotencyKey: true })
+
+// Option B: Provide a specific lifecycle-managed key (for safe retries)
+await api.post('/api/orders', orderData, { idempotencyKey: formIdempotencyKey })
+
+// Option C: Use ergonomic apiClient.idempotent shortcuts
+await apiClient.idempotent.post('/api/orders', orderData)
+```
+
+### 3. Lifecycle-Aware Hook in React (`useIdempotencyKey`)
+Maintains key stability across component re-renders, retains the same key during network retries, and refreshes upon success:
+
+```tsx
+import React, { useState } from 'react'
+import { apiClient } from '@/api/client'
+import { useIdempotencyKey } from '@/hooks'
+
+export const CheckoutForm: React.FC = () => {
+  const { key, refreshKey } = useIdempotencyKey()
+  const [loading, setLoading] = useState(false)
+
+  const handleCheckout = async () => {
+    setLoading(true)
+    try {
+      await apiClient.idempotent.post('/api/orders', { amount: 150000 }, key)
+      refreshKey() // Refresh key only on success
+      alert('Order placed successfully!')
+    } catch (error) {
+      // Key is preserved for safe retry without duplicate processing
+      console.error('Checkout failed:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <button onClick={handleCheckout} disabled={loading}>
+      {loading ? 'Processing...' : 'Pay Now'}
+    </button>
+  )
+}
+```
+
+### 4. Lifecycle-Aware Composable in Vue (`useIdempotencyKey`)
+The equivalent composable in Vue 3:
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue'
+import { apiClient } from '@/api/client'
+import { useIdempotencyKey } from '@/composables'
+
+const { key, refreshKey } = useIdempotencyKey()
+const loading = ref(false)
+
+const handleCheckout = async () => {
+  loading.value = true
+  try {
+    await apiClient.idempotent.post('/api/orders', { amount: 150000 }, key.value)
+    refreshKey()
+  } catch (error) {
+    // Key is preserved for safe retry
+  } finally {
+    loading.value = false
+  }
+}
+</script>
+```
