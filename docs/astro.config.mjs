@@ -18,6 +18,25 @@ export default defineConfig({
       logo: {
         src: './src/assets/logo.svg',
       },
+      favicon: '/favicon.svg',
+      head: [
+        {
+          tag: 'link',
+          attrs: {
+            rel: 'icon',
+            type: 'image/x-icon',
+            href: base === '/' ? '/favicon.ico' : `${base}/favicon.ico`,
+          },
+        },
+        {
+          tag: 'link',
+          attrs: {
+            rel: 'apple-touch-icon',
+            sizes: '180x180',
+            href: base === '/' ? '/apple-touch-icon.png' : `${base}/apple-touch-icon.png`,
+          },
+        },
+      ],
       social: [
         {
           icon: 'github',
