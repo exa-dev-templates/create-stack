@@ -192,10 +192,52 @@ export function dispatchToast(detail: ApiToastDetail): void {
 }
 ```
 
-> **The `skipToast` Option**: For requests requiring custom inline error handling without global notifications, pass `{ skipToast: true }`:
-> ```typescript
-> await apiClient.get('/users/check-email', { skipToast: true });
-> ```
+### 5. Idempotency Key Injection & Resilience (useIdempotencyKey)
+
+In compliance with IETF `draft-ietf-httpapi-idempotency-key-header` and the [Idempotency Protection](/en/standards/idempotency) standard, the React template provides native **Web Crypto API** idempotency utilities (Zero-Bloat, zero external packages) along with the `useIdempotencyKey` lifecycle hook:
+
+- **Axios `idempotencyKey` Option**: The request interceptor intercepts `idempotencyKey: true` (auto-generates UUID v4) or `idempotencyKey: 'custom-key'` and sets both `Idempotency-Key` and `X-Idempotency-Key` headers.
+- **Convenience Methods**: Provides `api.idempotent.post()`, `api.idempotent.put()`, and `api.idempotent.patch()`.
+- **Browser Refresh (F5) Resilience**: When configured with a `scope` (e.g. `'checkout-order'`), keys persist in `sessionStorage` with a 30-minute TTL, ensuring accidental page reloads do not trigger duplicate mutations.
+- **Timeout & Retry Safety**: If network drops or timeouts occur, the active key is retained for subsequent retry clicks. The key only rotates (`refreshKey()`) upon a successful 2xx HTTP response.
+
+```tsx title="Example useIdempotencyKey in a Checkout Component"
+import React, { useState } from 'react';
+import { Button } from 'primereact/button';
+import { useIdempotencyKey } from '@/hooks/useIdempotencyKey';
+import api from '@/api/client';
+
+export const CheckoutForm: React.FC = () => {
+  const [loading, setLoading] = useState(false);
+  const { key, execute } = useIdempotencyKey({ scope: 'checkout-order' });
+
+  const handleCheckout = async () => {
+    setLoading(true);
+    try {
+      // execute() retains key on failure/timeout, and rotates key upon 2xx success
+      await execute(async (activeKey) => {
+        return await api.post('/api/v1/orders', {
+          items: [{ id: 'item-1', qty: 2 }],
+        }, { idempotencyKey: activeKey });
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-4 border rounded">
+      <p className="text-xs text-gray-500 mb-2">Active Key: {key}</p>
+      <Button
+        label="Pay Now"
+        icon="pi pi-check"
+        loading={loading}
+        onClick={handleCheckout}
+      />
+    </div>
+  );
+};
+```
 
 ---
 

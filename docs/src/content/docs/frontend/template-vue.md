@@ -192,10 +192,52 @@ export function dispatchToast(detail: ApiToastDetail): void {
 }
 ```
 
-> **Opsi `skipToast`**: Jika sebuah pemanggilan API ingin menangani error secara kustom tanpa memunculkan toast otomatis, cukup sertakan opsi `{ skipToast: true }` pada konfigurasi request:
-> ```typescript
-> await apiClient.get('/users/check-email', { skipToast: true });
-> ```
+### 5. Utilitas Idempotency & Resiliensi Mutasi (useIdempotencyKey)
+
+Sesuai standar IETF `draft-ietf-httpapi-idempotency-key-header` dan aturan [Idempotency Protection](/standards/idempotency), template Vue menyediakan utilitas idempotency berbasis **Native Web Crypto API** (Zero-Bloat, tanpa package eksternal) serta composable lifecycle `useIdempotencyKey`:
+
+- **Opsi `idempotencyKey` pada Axios**: Request interceptor membaca opsi `idempotencyKey: true` (otomatis UUID v4 baru) atau `idempotencyKey: 'custom-key'` dan menyuntikkannya ke header `Idempotency-Key` dan `X-Idempotency-Key`.
+- **Convenience Methods**: Disediakan helper `api.idempotent.post()`, `api.idempotent.put()`, dan `api.idempotent.patch()`.
+- **Resiliensi Browser F5 / Refresh**: Dengan parameter `scope` (contoh: `'checkout-order'`), key disimpan di `sessionStorage` dengan TTL 30 menit sehingga user yang me-refresh halaman tidak akan membuat mutasi duplikat.
+- **Timeout & Retry-Safe**: Jika koneksi putus atau request timeout, key yang sama tetap dipertahankan saat tombol ditekan kembali. Key hanya otomatis diperbarui (`refreshKey()`) saat request sukses (HTTP 2xx).
+
+```vue title="Contoh Penggunaan useIdempotencyKey pada Form Checkout"
+<script setup lang="ts">
+import { ref } from 'vue';
+import Button from 'primereact/button';
+import { useIdempotencyKey } from '@/composables/useIdempotencyKey';
+import api from '@/api/client';
+
+const loading = ref(false);
+const { key, execute } = useIdempotencyKey({ scope: 'checkout-order' });
+
+const handleCheckout = async () => {
+  loading.value = true;
+  try {
+    // execute() mempertahankan key jika error/timeout, dan otomatis merotasi key saat 2xx
+    await execute(async (activeKey) => {
+      return await api.post('/api/v1/orders', {
+        items: [{ id: 'item-1', qty: 2 }],
+      }, { idempotencyKey: activeKey });
+    });
+  } finally {
+    loading.value = false;
+  }
+};
+</script>
+
+<template>
+  <div class="p-4 border rounded">
+    <p class="text-xs text-gray-500 mb-2">Active Key: {{ key }}</p>
+    <Button
+      label="Bayar Sekarang"
+      icon="pi pi-check"
+      :loading="loading"
+      @click="handleCheckout"
+    />
+  </div>
+</template>
+```
 
 ---
 

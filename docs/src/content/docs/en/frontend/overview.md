@@ -44,6 +44,7 @@ All REST API operations flow through the centralized Axios client (`src/api/clie
 - **Bearer Token Auto-Injection**: Extracts browser access token cookies natively without external library bloat.
 - **Concurrent Request Queuing on 401**: When access tokens expire, incoming requests are buffered into `failedQueue` while the refresh token executes against `/auth/refresh`. Once rotated, buffered requests are replayed transparently.
 - **Global Toast Event Bridge**: Network anomalies or 4xx/5xx HTTP responses automatically broadcast an `api:toast` window event, suppressible per request via `{ skipToast: true }`.
+- **Idempotency Protection & Resilient Mutation Lifecycle (`useIdempotencyKey`)**: Automatically injects standard `Idempotency-Key` and `X-Idempotency-Key` headers via `{ idempotencyKey: true | string }`. The `useIdempotencyKey` lifecycle hook/composable secures mutations against F5 browser reloads via `sessionStorage`, retains the key during timeouts and retries, and automatically cycles to a fresh key upon 2xx success.
 
 ---
 

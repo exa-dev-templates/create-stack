@@ -44,6 +44,7 @@ Seluruh request API melalui Axios instance terpusat (`src/api/client.ts`):
 - **Bearer Token Auto-Injection**: Membaca access token dari cookie browser secara native tanpa library luar.
 - **Concurrent Request Queuing on 401**: Saat token kedaluwarsa, seluruh request paralel ditampung dalam antrean `failedQueue` sementara refresh token diputar ke `/auth/refresh`. Setelah sukses, semua request otomatis di-replay tanpa kegagalan di sisi user.
 - **Global Toast Event Bridge**: Error jaringan atau HTTP 4xx/5xx otomatis memicu toast notifikasi global via window event `api:toast`, dapat dinonaktifkan per request dengan opsi `{ skipToast: true }`.
+- **Proteksi Idempotency & Resiliensi Mutasi (`useIdempotencyKey`)**: Auto-inject header `Idempotency-Key` dan `X-Idempotency-Key` via opsi `{ idempotencyKey: true }` atau string. Hook/composable `useIdempotencyKey` menjamin mutasi aman dari refresh halaman (F5) via `sessionStorage`, mempertahankan key yang sama pada retry timeout/network drop, dan otomatis merotasi key saat respons sukses (2xx).
 
 ---
 
