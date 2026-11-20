@@ -316,6 +316,34 @@ export default router
 
 ---
 
+## 🧵 Request Context, Tracing & Correlation ID
+
+`template-express` menyediakan propagasi konteks request end-to-end tanpa perlu mengoper objek `req` secara manual ke service atau repository yang dalam.
+
+### 1. Propagasi X-Request-ID & Lifecycle Context
+
+- **Ekstraksi & Generasi ID**: Middleware `requestIdMiddleware` (`src/middleware/requestId.ts`) membaca header `X-Request-ID` dari client (dibatasi maksimal 64 karakter) atau membuat UUID v4 baru via `crypto.randomUUID()`.
+- **Injeksi Response & Payload**: Header `X-Request-ID` dikirimkan balik ke client pada response headers, dan method `res.json` di-wrap agar semua payload JSON otomatis memuat `requestId`.
+- **Node.js `AsyncLocalStorage`**: Store `requestContext` (`src/utils/requestContext.ts`) menyimpan `requestId`, `startTime`, `method`, `url`, `user` (jika terautentikasi), dan status `isAborted`.
+- **Deteksi Client Disconnect**: Event listener `req.on('close')` mendeteksi pembatalan koneksi client di tengah proses dan menandai `store.isAborted = true`.
+- **Helper Terpadu**: Komponen backend dapat mengakses data context kapan saja:
+  ```typescript
+  import { getRequestId, getCurrentUser, isRequestAborted } from '../utils/requestContext'
+
+  const currentId = getRequestId()
+  const user = getCurrentUser()
+  if (isRequestAborted()) {
+    // batalkan pemrosesan berat
+  }
+  ```
+
+### 2. Integrasi Structured Logging & OpenTelemetry
+
+- **Winston Logger Binding**: Logger `logger.ts` secara transparan membaca `requestId` dari `AsyncLocalStorage` pada setiap pemanggilan log, sehingga seluruh log baris membawa konteks request ID tanpa parameter tambahan.
+- **W3C TraceContext & OpenTelemetry**: Terintegrasi dengan `@opentelemetry/sdk-node` di `src/config/tracing.ts`. Saat `OTEL_ENABLED=true`, traceparent di-propagasikan secara terdistribusi melintasi HTTP headers dan message broker.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi Zod memastikan semua request payload terdefinisi dengan skema kuat:

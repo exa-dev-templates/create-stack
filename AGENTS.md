@@ -47,6 +47,10 @@ Repositori ini adalah kumpulan template arsitektur standar untuk backend (Expres
 - ❌ **DILARANG ENDPOINT TANPA DOKUMENTASI**: Dilarang menambahkan modul atau endpoint API baru tanpa mendaftarkannya ke dalam skema OpenAPI (tags, summary, request body schema, auth requirements, dan standard response `ApiResponse<T>`).
 - Dokumentasi wajib selalu sinkron dengan kode aktual backend untuk mencegah *documentation drift*.
 
+### H. Request Context & Correlation ID Propagation (Rules: `.agents/rules/logging.md`)
+- **WAJIB PROPAGASI X-REQUEST-ID**: Setiap request yang masuk wajib diekstrak header `X-Request-ID`-nya (atau dibuatkan UUID unik baru), dikirim balik pada response headers, disertakan pada envelope JSON `BaseResponse.requestId`, serta disimpan dalam context store asynchronous thread-safe (`AsyncLocalStorage` di Node, `contextvars` di Python, `context.Context` di Go, `MDC` di Java, `tower_http::request_id` di Rust).
+- **KORELASI DISTRIBUSI & LOGGING**: Semua log terstruktur NDJSON dan trace OpenTelemetry wajib memuat `requestId` (beserta `traceId` & `spanId` saat tracing aktif) untuk korelasi end-to-end tanpa perlu mengoper parameter logger secara manual.
+
 ---
 
 ## 2. Struktur Template & Lokasi Modul

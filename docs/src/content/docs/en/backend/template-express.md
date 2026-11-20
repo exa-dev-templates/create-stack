@@ -316,6 +316,34 @@ export default router
 
 ---
 
+## 🧵 Request Context, Tracing & Correlation ID
+
+`template-express` provides end-to-end request context propagation without requiring manual passing of `req` objects down into deep service or repository layers.
+
+### 1. X-Request-ID & Context Propagation
+
+- **ID Extraction & Generation**: The `requestIdMiddleware` (`src/middleware/requestId.ts`) extracts incoming `X-Request-ID` from client headers (capped at 64 characters) or generates a new UUID v4 via `crypto.randomUUID()`.
+- **Response & Payload Injection**: The `X-Request-ID` header is echoed back in response headers, and `res.json` is wrapped so every JSON payload is enriched with `requestId`.
+- **Node.js `AsyncLocalStorage`**: The `requestContext` store (`src/utils/requestContext.ts`) retains `requestId`, `startTime`, `method`, `url`, `user` (when authenticated), and `isAborted` across asynchronous boundaries.
+- **Client Disconnect Detection**: The `req.on('close')` listener detects early client socket termination and marks `store.isAborted = true`.
+- **Context Access Helpers**: Deep modules can access request context at any time:
+  ```typescript
+  import { getRequestId, getCurrentUser, isRequestAborted } from '../utils/requestContext'
+
+  const currentId = getRequestId()
+  const user = getCurrentUser()
+  if (isRequestAborted()) {
+    // abort expensive operations
+  }
+  ```
+
+### 2. Structured Logging & OpenTelemetry Integration
+
+- **Winston Logger Binding**: `logger.ts` transparently resolves `requestId` from `AsyncLocalStorage` on every log call, ensuring all logs include the request correlation context without manual arguments.
+- **W3C TraceContext & OpenTelemetry**: Integrates with `@opentelemetry/sdk-node` in `src/config/tracing.ts`. When `OTEL_ENABLED=true`, traceparent context is propagated across HTTP requests and message brokers.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Zod schemas enforce structural validity at the gateway before request bodies reach handlers:

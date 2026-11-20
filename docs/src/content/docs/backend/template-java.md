@@ -303,6 +303,29 @@ public class OrderController {
 
 ---
 
+## 🧵 Request Context, Tracing & Correlation ID
+
+`template-java` mengelola konteks request menggunakan SLF4J MDC (Mapped Diagnostic Context) berbasis `ThreadLocal` yang terintegrasi langsung dengan ekosistem Spring Boot dan Logback.
+
+### 1. Propagasi X-Request-ID & Lifecycle Context
+
+- **Ekstraksi & Generasi ID**: `RequestIdFilter` (`common/filter/RequestIdFilter.java`, turunan `OncePerRequestFilter`) membaca header `X-Request-Id` dari client atau meng-generate string UUID baru via `UUID.randomUUID().toString()`.
+- **Injeksi Response Header**: Nilai `requestId` dipasang kembali ke header response via `response.setHeader("X-Request-Id", requestId)`.
+- **ThreadLocal MDC Binding**: Disimpan ke Mapped Diagnostic Context via `MDC.put(RequestContext.REQUEST_ID, requestId)`. Saat user berhasil terotentikasi via JWT, `AuthInterceptor` menambahkan user ID via `MDC.put(RequestContext.USER_ID, userId)`.
+- **Pembersihan Bersih (*Clean Slate*)**: Blok `finally` pada filter selalu mengeksekusi `RequestContext.clear()` (`MDC.clear()`), menjamin pool thread Tomcat/Undertow tidak mewariskan sisa metadata ke request berikutnya.
+- **Helper Terpadu `RequestContext`**:
+  ```java
+  String currentRequestId = RequestContext.getRequestId();
+  String currentUserId = RequestContext.getUserId();
+  ```
+
+### 2. Integrasi Structured Logging & OpenTelemetry
+
+- **Logback MDC Pattern & JSON Encoder**: Konfigurasi `logback-spring.xml` menyertakan key MDC `%X{requestId}` dan `%X{userId}` pada setiap baris log (konsol maupun format JSON terstruktur untuk log aggregation seperti FluentBit/Datadog/ELK).
+- **Kompatibilitas Micrometer & OpenTelemetry**: Mendukung propagasi W3C Trace Context otomatis jika runtime ditambahkan agen OpenTelemetry Java atau Micrometer Tracing (`traceId` dan `spanId` otomatis terikat ke MDC).
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi input menggunakan standard Jakarta Bean Validation (`@Valid`):

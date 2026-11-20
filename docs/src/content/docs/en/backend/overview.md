@@ -25,17 +25,17 @@ flowchart LR
 
 ## 📊 Feature Matrix across 5 Backends
 
-| Template | Language / Framework | Database & Transactions | Realtime Engine | Distributed Bridge | Messaging | Rate Limiter | OpenAPI Doc | Port |
-|---|---|---|---|---|---|---|---|---|
-| `template-express` | TypeScript / Express | Postgres / MySQL (`withTransaction`) | SSE & Socket.IO | Redis & RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `5000` |
-| `template-fastapi-async` | Python / FastAPI | Postgres / MySQL (`@transactional`) | SSE & WebSocket | Redis Pub/Sub | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `8000` |
-| `template-golang` | Go / Fiber v2 | Postgres / MySQL (`TransactionManager`) | SSE & WebSocket | Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `8080` |
-| `template-java` | Java 17 / Spring Boot 4 | Postgres / MySQL (`@Transactional`) | SSE & STOMP /ws | Local, Redis, RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/swagger-ui.html` | `8080` |
-| `template-rust` | Rust / Axum 0.7 | Postgres / MySQL (`&mut Transaction`) | SSE & WebSocket | Local, Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `8080` |
+| Template | Language / Framework | Database & Transactions | Realtime Engine | Distributed Bridge | Messaging | Rate Limiter | Request Context | OpenAPI Doc | Port |
+|---|---|---|---|---|---|---|---|---|---|
+| `template-express` | TypeScript / Express | Postgres / MySQL (`withTransaction`) | SSE & Socket.IO | Redis & RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `AsyncLocalStorage` | `/docs` | `5000` |
+| `template-fastapi-async` | Python / FastAPI | Postgres / MySQL (`@transactional`) | SSE & WebSocket | Redis Pub/Sub | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `contextvars` | `/docs` | `8000` |
+| `template-golang` | Go / Fiber v2 | Postgres / MySQL (`TransactionManager`) | SSE & WebSocket | Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `context.Context` | `/docs` | `8080` |
+| `template-java` | Java 17 / Spring Boot 4 | Postgres / MySQL (`@Transactional`) | SSE & STOMP /ws | Local, Redis, RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | SLF4J `MDC` | `/swagger-ui.html` | `8080` |
+| `template-rust` | Rust / Axum 0.7 | Postgres / MySQL (`&mut Transaction`) | SSE & WebSocket | Local, Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `tower` / `tracing` | `/docs` | `8080` |
 
 ---
 
-## 🛡️ 7 Core Backend Architectural Rules
+## 🛡️ 8 Core Backend Architectural Rules
 
 ### 1. Pure Parameter-Passing Database Transactions
 Hiding database transactions inside `context.Context` (Go) or thread/task-local storage (Rust) is strictly prohibited. Transaction objects must be passed explicitly as function/method parameters:
@@ -87,3 +87,6 @@ Every backend serves interactive documentation at `/docs` (or `/swagger-ui.html`
 
 ### 7. Dual-Tier Rate Limiting & DoS Protection (RFC 6585)
 All backends implement dual-tier rate limiting (Global API 100 req/60s and Strict Auth 5-10 req/60s) emitting standard `X-RateLimit-*` and `Retry-After` headers, with hybrid Redis distributed storage and resilient in-memory local failover.
+
+### 8. Request Context, Tracing & Correlation ID Propagation
+All backends must extract incoming `X-Request-ID` headers (or generate fresh UUID v4s), echo them to clients via response headers, inject them into `BaseResponse.requestId`, and maintain thread-safe asynchronous context stores (Node `AsyncLocalStorage`, Python `contextvars`, Go `context.Context`, Java `MDC`, Rust `tower_http::request_id` + `tracing`) so that all single-line NDJSON logs and OpenTelemetry distributed spans correlate perfectly.

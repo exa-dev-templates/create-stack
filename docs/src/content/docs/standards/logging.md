@@ -53,3 +53,24 @@ Log **TIDAK BOLEH** mencatat informasi rahasia pengguna:
 - Token otentikasi (JWT Bearer, Refresh Token)
 - Nomor Kartu Kredit / CVV
 - PIN atau kode OTP
+
+---
+
+## 🧵 Propagasi Request Context & Correlation ID
+
+Setiap backend service wajib mengimplementasikan isolasi context request asynchronous secara thread-safe:
+
+1. **Header `X-Request-ID`**:
+   - Jika client mengirimkan header `X-Request-ID`, gunakan nilai tersebut (setelah dibersihkan dan dipastikan panjangnya valid).
+   - Jika tidak ada, buat UUID v4 baru.
+   - Header ini **wajib** dikirimkan kembali pada response headers `X-Request-ID`.
+   - Wajib disertakan di field `requestId` pada envelope response JSON (`BaseResponse`).
+2. **Asynchronous Context Storage**:
+   - **Express**: Node.js `AsyncLocalStorage` (`src/utils/requestContext.ts`).
+   - **FastAPI**: Python `contextvars.ContextVar` (`lib/logger.py`).
+   - **Go Fiber**: Go `context.Context` (`pkg/logging/fiber.go`).
+   - **Java**: SLF4J `MDC` via `ThreadLocal` (`common/filter/RequestIdFilter.java`).
+   - **Rust**: `tower_http::request_id` dan `tracing::Span` extensions (`src/pkg/logging/middleware.rs`).
+3. **Korelasi Terdistribusi & OpenTelemetry**:
+   - Saat tracing aktif (`OTEL_ENABLED=true`), context W3C TraceContext (`traceparent`) otomatis dipropagasikan lintas microservice dan antrean pesan (RabbitMQ / Kafka).
+   - Seluruh baris log otomatis memuat `traceId` dan `spanId`.

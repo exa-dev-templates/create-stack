@@ -288,6 +288,35 @@ orders.Post("/", orderHandler.CreateOrder)
 
 ---
 
+## 🧵 Request Context, Tracing & Correlation ID
+
+`template-golang` implements standard Go `context.Context` request context management integrated directly into Fiber's UserContext and structured logger.
+
+### 1. X-Request-ID & Context Propagation
+
+- **ID Extraction & Generation**: `RequestIDMiddleware` (`pkg/logging/fiber.go`) extracts incoming `X-Request-ID` headers or generates a fresh UUID via `google/uuid`.
+- **Response Header Injection**: The ID is echoed in response headers via `c.Set(HeaderRequestID, rid)` and retained in `c.Locals("request_id", rid)`.
+- **Standard Go `context.Context` Binding**: The middleware invokes `ContextWithRequestID(c.UserContext(), rid)` and updates Fiber's context via `c.SetUserContext(ctx)`. Handlers and services pass `ctx := c.UserContext()` down into database queries (`db.GetContext(ctx, ...)`) and downstream RPC clients, ensuring seamless cancellation and deadline propagation.
+- **Context Access Helpers**:
+  ```go
+  rid := logging.RequestIDFromFiber(c)
+  logger := logging.LoggerFromFiber(c)
+  ctx := logging.ContextFromFiber(c)
+  ```
+
+### 2. Structured Logging & OpenTelemetry Integration
+
+- **Request-Scoped `slog.Logger`**: The middleware stores a request-scoped logger `Logger().With(slog.String("request_id", rid))` within the context. Every call to `logger.Info(...)` or `logger.Error(...)` across handlers and service layers carries the correlation ID automatically.
+- **OpenTelemetry Span Correlation**: If an active W3C trace span exists in `c.UserContext()`, the middleware automatically binds `trace_id` and `span_id` to the logger attributes:
+  ```go
+  if spanCtx := trace.SpanContextFromContext(c.UserContext()); spanCtx.IsValid() {
+      logAttrs = append(logAttrs, slog.String("trace_id", spanCtx.TraceID().String()), slog.String("span_id", spanCtx.SpanID().String()))
+  }
+  ```
+- **Structured Access Logging**: `AccessLogMiddleware` records every completed request with microsecond latency precision (`latency_ms`), HTTP status, route path, client IP, and user agent.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Endpoint requests use `pkg/validation` to bind and validate three payload formats into a single DTO:

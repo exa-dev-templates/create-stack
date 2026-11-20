@@ -307,6 +307,25 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 ---
 
+## 🧵 Request Context, Tracing & Correlation ID
+
+`template-fastapi-async` manages asynchronous request context propagation using Python's modern `contextvars` primitives without polluting global state.
+
+### 1. X-Request-ID & Context Propagation
+
+- **ID Extraction & Generation**: The `LogContextMiddleware` (`middleware/log_context.py`) extracts incoming `X-Request-ID` headers or generates a unique hex identifier via `uuid.uuid4().hex`.
+- **Response Header Injection**: The `request_id` is stamped onto outgoing response headers via `response.headers["X-Request-ID"] = request_id`.
+- **Python Context Variables (`contextvars`)**: Backed by `ContextVar[str]` in `lib/logger.py` (`request_id_var` and `user_id_var`). The context is natively scoped to the active `asyncio` coroutine and propagates automatically across `await` points, FastAPI dependency injection trees, and background tasks.
+- **Safe Lifecycle Management**: The middleware guarantees context cleanup in a `finally` block via `reset_request_context()`, preventing cross-request context leakage across event loop cycles.
+
+### 2. Structured Logging & OpenTelemetry Integration
+
+- **Automatic Log Injection via `ContextFilter`**: `ContextFilter` in `lib/logger.py` extracts `request_id` and `user_id` from context variables and injects them into every standard Python `LogRecord`, ensuring single-line structured JSON logs always carry correlation IDs.
+- **OpenTelemetry Span Extraction**: When OpenTelemetry is enabled (`trace = opentelemetry.trace`), `ContextFilter` queries the current active span (`trace.get_current_span()`) and records formatted `trace_id` and `span_id` onto each log entry.
+- **Structured JSON Access Logging**: Every completed HTTP request logs structured JSON data detailing `method`, `path`, `status_code`, `duration_ms`, `client_ip`, and `user_agent`.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Pydantic v2 schemas enforce structural validation before request execution:

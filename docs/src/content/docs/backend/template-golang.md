@@ -292,6 +292,35 @@ orders.Post("/", orderHandler.CreateOrder)
 
 ---
 
+## 🧵 Request Context, Tracing & Correlation ID
+
+`template-golang` menerapkan manajemen konteks request berbasis Go standar `context.Context` yang diintegrasikan langsung ke dalam Fiber UserContext dan structured logger.
+
+### 1. Propagasi X-Request-ID & Lifecycle Context
+
+- **Ekstraksi & Generasi ID**: `RequestIDMiddleware` (`pkg/logging/fiber.go`) membaca header `X-Request-ID` dari request yang masuk atau membuat identifier unik baru dengan `google/uuid`.
+- **Injeksi Response Header**: Nilai request ID dipasang pada response header via `c.Set(HeaderRequestID, rid)` dan disimpan pada `c.Locals("request_id", rid)`.
+- **Penyimpanan di Go `context.Context`**: Middleware memanggil `ContextWithRequestID(c.UserContext(), rid)` dan memperbarui context Fiber melalui `c.SetUserContext(ctx)`. Handlers dan service layer dapat meneruskan `ctx := c.UserContext()` ke query database (`db.GetContext(ctx, ...)`) dan HTTP client eksternal untuk propagasi timeout dan cancellation sinyal.
+- **Helper Akses Context**:
+  ```go
+  rid := logging.RequestIDFromFiber(c)
+  logger := logging.LoggerFromFiber(c)
+  ctx := logging.ContextFromFiber(c)
+  ```
+
+### 2. Integrasi Structured Logging & OpenTelemetry
+
+- **Request-Scoped `slog.Logger`**: Middleware menginisialisasi logger turunan `Logger().With(slog.String("request_id", rid))` yang tersimpan di dalam context. Semua pemanggilan `logger.Info(...)` atau `logger.Error(...)` di level handler maupun service otomatis menyertakan `request_id`.
+- **Korelasi OpenTelemetry Spans**: Jika terdapat span W3C aktif di `c.UserContext()`, middleware otomatis menambahkan `trace_id` dan `span_id` ke dalam atribut logger:
+  ```go
+  if spanCtx := trace.SpanContextFromContext(c.UserContext()); spanCtx.IsValid() {
+      logAttrs = append(logAttrs, slog.String("trace_id", spanCtx.TraceID().String()), slog.String("span_id", spanCtx.SpanID().String()))
+  }
+  ```
+- **Access Log Terstruktur**: `AccessLogMiddleware` mencatat setiap request HTTP yang selesai dengan metrik presisi mikrodetik (`latency_ms`), status code HTTP, path, IP, dan user agent.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Semua endpoint POST/PUT memakai binder `pkg/validation` yang menerima satu DTO untuk **tiga bentuk body sekaligus**:

@@ -302,6 +302,24 @@ let app = Router::new()
 
 ---
 
+## 🧵 Request Context, Tracing & Correlation ID
+
+`template-rust` menerapkan propagasi konteks asynchronous performa tinggi berbasis ekosistem `tower-http` dan `tracing` crate standard Rust.
+
+### 1. Propagasi X-Request-ID & Lifecycle Context
+
+- **Ekstraksi & Generasi ID**: Layer `create_request_id_layer()` (`src/pkg/logging/middleware.rs`, berbasis `tower_http::request_id::SetRequestIdLayer` dan `MakeRequestUuid`) membaca header `x-request-id` dari client atau meng-generate identifier UUID v4 unik.
+- **Injeksi Response Otomatis**: Layer `create_propagate_request_id_layer()` (`PropagateRequestIdLayer`) otomatis menyalin header `x-request-id` dari request ke response header keluar, menjamin korelasi ID pada setiap client.
+- **Request Extensions & Tokio Task Propagation**: Identifier request tersimpan di dalam Axum `Request` extensions. Di dalam ekosistem asynchronous Tokio, tracing span di-propagasikan melintasi thread boundary dan task spawned via instrumentasi `tracing::Instrument`.
+
+### 2. Integrasi Structured Logging & OpenTelemetry
+
+- **HTTP Tracing Span**: `create_trace_layer` (`TraceLayer::new_for_http()`) membungkus setiap request ke dalam tracing span `tracing::Level::INFO`, mencatat siklus hidup request dan latency respons tanpa alokasi string berlebih.
+- **OpenTelemetry Tracer Provider**: Modul `src/pkg/telemetry/mod.rs` mengonfigurasi W3C `TraceContextPropagator` dan OTLP Span Exporter via Tonic gRPC (`opentelemetry-otlp`). Saat `OTEL_ENABLED=true`, trace spans diekspor ke OpenTelemetry Collector secara asynchronous via `BatchSpanProcessor`.
+- **Structured JSON Subscriber**: Menggunakan `tracing-subscriber` dengan format JSON, sehingga seluruh event log internal, database query SQLx, dan access log menghasilkan satu baris NDJSON terstruktur dengan level, target, timestamp, dan context fields.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi DTO menggunakan custom Axum extractor `ValidatedJson<T>` di atas crate `validator`:

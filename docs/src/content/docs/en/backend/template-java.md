@@ -303,6 +303,29 @@ public class OrderController {
 
 ---
 
+## 🧵 Request Context, Tracing & Correlation ID
+
+`template-java` manages request context using SLF4J MDC (Mapped Diagnostic Context) backed by `ThreadLocal` storage integrated into the Spring Boot and Logback lifecycle.
+
+### 1. X-Request-ID & Context Propagation
+
+- **ID Extraction & Generation**: `RequestIdFilter` (`common/filter/RequestIdFilter.java`, extending `OncePerRequestFilter`) reads incoming `X-Request-Id` headers or generates a new identifier via `UUID.randomUUID().toString()`.
+- **Response Header Injection**: Echoes the correlation identifier in response headers via `response.setHeader("X-Request-Id", requestId)`.
+- **ThreadLocal MDC Binding**: Stored into the Mapped Diagnostic Context via `MDC.put(RequestContext.REQUEST_ID, requestId)`. Upon successful JWT authentication, `AuthInterceptor` enriches context with `MDC.put(RequestContext.USER_ID, userId)`.
+- **Guaranteed Cleanup**: The filter's `finally` block executes `RequestContext.clear()` (`MDC.clear()`), preventing thread-local leakage across pooled servlet worker threads.
+- **Context Utility Access**:
+  ```java
+  String currentRequestId = RequestContext.getRequestId();
+  String currentUserId = RequestContext.getUserId();
+  ```
+
+### 2. Structured Logging & OpenTelemetry Integration
+
+- **Logback MDC Pattern & JSON Encoding**: `logback-spring.xml` formats log statements with `%X{requestId}` and `%X{userId}` across all console and NDJSON outputs for central log aggregators (ELK, FluentBit, Datadog).
+- **Micrometer Tracing & OpenTelemetry Ready**: Seamlessly interoperates with OpenTelemetry Java Agent or Micrometer Tracing to automatically propagate W3C `traceparent` and inject `traceId` / `spanId` into MDC.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Validates incoming DTO payloads using standard Jakarta Bean Validation:

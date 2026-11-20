@@ -302,6 +302,24 @@ let app = Router::new()
 
 ---
 
+## 🧵 Request Context, Tracing & Correlation ID
+
+`template-rust` delivers high-performance asynchronous request context propagation built on the standard `tower-http` and `tracing` crates.
+
+### 1. X-Request-ID & Context Propagation
+
+- **ID Extraction & Generation**: The `create_request_id_layer()` layer (`src/pkg/logging/middleware.rs`, leveraging `tower_http::request_id::SetRequestIdLayer` and `MakeRequestUuid`) inspects incoming `x-request-id` headers or generates a fresh UUID v4.
+- **Automatic Response Propagation**: The `create_propagate_request_id_layer()` (`PropagateRequestIdLayer`) automatically echoes the `x-request-id` header onto all outgoing HTTP responses.
+- **Request Extensions & Tokio Task Propagation**: The correlation ID is stored within Axum request extensions. Across Tokio async tasks and worker threads, context is preserved via `tracing::Instrument`.
+
+### 2. Structured Logging & OpenTelemetry Integration
+
+- **HTTP Tracing Spans**: `create_trace_layer` (`TraceLayer::new_for_http()`) encloses each incoming HTTP request in an `INFO`-level tracing span, recording request lifecycles and response latency without unnecessary heap allocations.
+- **OpenTelemetry Tracer Provider**: `src/pkg/telemetry/mod.rs` configures W3C `TraceContextPropagator` and an OTLP Span Exporter over Tonic gRPC (`opentelemetry-otlp`). When `OTEL_ENABLED=true`, spans are batched and exported asynchronously to OpenTelemetry Collectors.
+- **Structured JSON Subscriber**: Emits structured NDJSON log records via `tracing-subscriber` with `json` formatting, ensuring all internal application logs, SQLx queries, and access logs carry structured span metadata.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Validates incoming DTO structures using `ValidatedJson<T>` on top of `validator`:

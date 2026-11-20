@@ -311,6 +311,25 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 ---
 
+## 🧵 Request Context, Tracing & Correlation ID
+
+`template-fastapi-async` mengelola propagasi konteks request asynchronous menggunakan modul Python modern `contextvars` tanpa polusi argument global.
+
+### 1. Propagasi X-Request-ID & Lifecycle Context
+
+- **Ekstraksi & Generasi ID**: `LogContextMiddleware` (`middleware/log_context.py`) mengekstrak header `X-Request-ID` dari request yang masuk, atau meng-generate string hex acak unik via `uuid.uuid4().hex`.
+- **Injeksi Response Header**: Nilai `request_id` dipasang kembali ke header response via `response.headers["X-Request-ID"] = request_id`.
+- **Python Context Variables (`contextvars`)**: Menggunakan `ContextVar[str]` di `lib/logger.py` (`request_id_var` dan `user_id_var`). Nilai ini terikat (*scoped*) pada coroutine `asyncio` aktif dan diteruskan otomatis melintasi pemanggilan `await`, dependency injection FastAPI, dan background tasks.
+- **Siklus Hidup Aman**: Middleware memastikan pembersihan konteks di blok `finally` via `reset_request_context()` untuk mencegah *context leak* antar reuse thread/worker.
+
+### 2. Integrasi Structured Logging & OpenTelemetry
+
+- **Auto-Injection via `ContextFilter`**: `ContextFilter` di `lib/logger.py` otomatis menginjeksikan `request_id` dan `user_id` dari `contextvars` ke setiap record log Python (`logging.LogRecord`), sehingga seluruh output JSON menyertakan metadata korelasi.
+- **OpenTelemetry Span Context**: Jika OpenTelemetry terpasang (`trace = opentelemetry.trace`), `ContextFilter` mengambil `trace_id` dan `span_id` dari span yang sedang aktif (`trace.get_current_span()`) dan memformatnya ke log record secara otomatis.
+- **Structured JSON Access Log**: Setiap HTTP request menghasilkan log akses JSON dengan field terstruktur: `method`, `path`, `status_code`, `duration_ms`, `client_ip`, dan `user_agent`.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi Pydantic v2 memastikan request body divalidasi keamanannya sebelum dieksekusi:
