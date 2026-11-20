@@ -1,49 +1,65 @@
 ---
 title: Frontend Standards & Architecture
-description: Feature-sliced architecture, Tailwind CSS v4, and the strict skeleton loading rule
+description: Feature-driven module architecture, Axios interceptors, Tailwind CSS v4, and skeleton loader guidelines
 ---
 
-Both frontend templates (`template-react` and `template-vue`) are built on consistent, modular, and domain-driven design principles.
+Both frontend templates (`template-react` and `template-vue`) are built upon a consistent, modern, modular, and high-performance enterprise architecture.
 
 ---
 
-## 📂 Modular & Feature-Sliced Architecture
+## 📂 Modular & Feature-Driven Architecture
 
-Client code is organized by feature domains to maintain maintainability as the application grows:
+Client code is partitioned into domain-specific modules (*feature modules*) to ensure seamless scalability as codebases grow:
 
 ```text
 src/
-├── api/             # Domain-specific API clients (e.g. users.ts, auth.ts)
+├── api/             # Central Axios client (client.ts), interceptors, token refresh queue
 ├── assets/          # Static assets (images, fonts, global CSS)
-├── components/      # Shared global UI components
+├── components/      # Global & reusable UI components (ErrorBoundary, ToastProvider)
 │   └── layout/      # Sidebar, Header, Breadcrumbs
-├── features/        # Feature-specific components (e.g. features/users/UserTable.tsx)
-├── layouts/         # Page layout wrappers (DashboardLayout, AuthLayout)
-├── pages/           # Route-level views (DashboardPage, ProfilePage)
+├── layouts/         # Layout shells (DashboardLayout, AuthLayout)
+├── modules/         # Encapsulated feature modules per business domain
+│   ├── auth/        # Login, Register, auth store, types, API
+│   ├── dashboard/   # Dashboard widgets, metric cards
+│   └── users/       # User DataTable, dialog, usersApi
+├── pages/           # Root view-level routing (NotFound, fallback)
 ├── stores/          # Global state management (Zustand in React / Pinia in Vue)
-├── types/           # TypeScript interfaces, types, and DTOs
-└── utils/           # Pure utility functions (currency formatting, date helpers, cn)
+├── types/           # TypeScript interfaces, types, and standard envelopes
+└── utils/           # Pure utility helpers (native cookies, formatters, logger)
 ```
 
-> **Barrel Export Convention**: Every major folder includes an `index.ts`. This facilitates clean, concise imports:
+> **Barrel Exports Pattern**: Every primary directory and feature module exports a public `index.ts`. This encourages clean, unbloated imports:
 > ```ts
-> import { formatCurrency, cn } from '@/utils';
-> import { useUserStore } from '@/stores';
+> import { apiClient } from '@/api';
+> import { useAuthStore } from '@/modules/auth';
+> import { usersApi } from '@/modules/users';
+> import { getCookie, formatCurrency } from '@/utils';
 > ```
 
 ---
 
-## 🎨 Design System & Styling
-- **Tailwind CSS v4**: Next-generation utility-first CSS compiler with instant build times.
-- **Prime UI (Aura Theme)**: PrimeReact / PrimeVue styled with the modern *Aura Theme*, delivering accessible, enterprise-grade components (DataTable, Modal, Toast, Dropdown).
-- **Dark Mode Native**: Complete light/dark theme switching powered by Tailwind's `.dark` class.
+## 🌐 Enterprise HTTP Client & Token Rotation
+
+All REST API operations flow through the centralized Axios client (`src/api/client.ts`):
+- **Bearer Token Auto-Injection**: Extracts browser access token cookies natively without external library bloat.
+- **Concurrent Request Queuing on 401**: When access tokens expire, incoming requests are buffered into `failedQueue` while the refresh token executes against `/auth/refresh`. Once rotated, buffered requests are replayed transparently.
+- **Global Toast Event Bridge**: Network anomalies or 4xx/5xx HTTP responses automatically broadcast an `api:toast` window event, suppressible per request via `{ skipToast: true }`.
 
 ---
 
-## 🛡️ Mandatory Rule: Skeleton Loading (No Circular Spinners)
+## 🎨 Design System & Styling
 
-Per monorepo standard (`frontend-loading.md`):
+- **Tailwind CSS v4**: Zero-config CSS build via `@tailwindcss/vite` with instant HMR compilation.
+- **Prime UI (Aura Theme)**: PrimeReact / PrimeVue powered by `@primeuix/themes/aura`, delivering enterprise-grade components (DataTable, Dialog, Toast, Form Inputs).
+- **CSS Cascade Layer Order**: Strictly configured so Tailwind utilities take precedence over Prime UI defaults (`order: 'tailwind-base, primereact/primevue, tailwind-utilities'`).
+- **Dark Mode Support**: Native dark mode activation via `.dark` class targeting the root `<html>` element.
 
-- ❌ **STRICTLY PROHIBITED**: Using circular loading spinners for page loading, profile views, card grids, or data tables.
-- ✅ **MANDATORY SKELETON**: Every asynchronous data fetch must present **Skeleton Loaders** that mimic the layout of the loaded content.
-- ✅ **Spinner Exception**: Circular spinners are permitted **ONLY** inside action `<Button>` components while an action (Submit, Save, Delete) is actively processing.
+---
+
+## 🛡️ Mandatory Rule: Skeleton Loaders (Zero Spinner Policy)
+
+Enforcing monorepo standards (`frontend-loading.md`):
+
+- ❌ **STRICTLY FORBIDDEN**: Using circular spinners ("loading muter") for page transitions, profile cards, or data tables.
+- ✅ **MANDATORY SKELETON**: Every asynchronous data fetch must display geometrically proportional **Skeleton Placeholders**.
+- ✅ **Button Spinner Exception**: Circular spinners are permitted **EXCLUSIVELY** within `<Button loading={...}>` components during active user actions (Submit, Save, Delete).
