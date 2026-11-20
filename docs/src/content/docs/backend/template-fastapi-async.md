@@ -330,6 +330,27 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 ---
 
+## 📦 Unified Object Storage (MinIO, S3, Local)
+
+`template-fastapi-async` mengintegrasikan driver penyimpanan objek asinkron di `lib/storage.py` dengan dukungan penuh untuk MinIO, AWS S3 / Cloudflare R2, dan sistem berkas lokal.
+
+### 1. Provider Terpadu & Pre-Signed URLs
+
+- **Driver Asinkron `StorageService`**: Abstraksi kelas abstrak yang mengimplementasikan `LocalStorageService` dan `S3StorageService` (berbasis `aioboto3` / `botocore`) sesuai variabel `STORAGE_PROVIDER`.
+- **Pre-Signed Upload & Download**: Method `get_presigned_upload_url()` dan `get_presigned_download_url()` memungkinkan pengunggahan langsung dari browser dengan batas waktu (*expiry*) yang dapat dikonfigurasi.
+- **Proteksi Path Traversal**: `LocalStorageService` menggunakan `Path.resolve()` dan verifikasi `is_relative_to()` untuk menolak path berbahaya di luar direktori dasar.
+
+### 2. Endpoint Upload & Integrasi Testcontainers
+
+- **Module Endpoints (`modules/uploads`)**:
+  - `POST /api/v1/uploads`: Menerima `UploadFile` (multipart) dengan streaming chunk asinkron untuk efisiensi memori.
+  - `GET /api/v1/uploads/{key}`: Mengunduh berkas via `FileResponse` atau streaming buffer.
+  - `DELETE /api/v1/uploads/{key}`: Menghapus berkas dari storage.
+  - `POST /api/v1/uploads/presigned-url`: Menghasilkan URL upload presigned.
+- **Suite Pengujian Testcontainers**: `tests/test_storage.py` menguji operasi penyimpanan secara terisolasi menggunakan MinIO Testcontainers di lingkungan Docker.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi Pydantic v2 memastikan request body divalidasi keamanannya sebelum dieksekusi:

@@ -106,6 +106,7 @@ export default defineConfig({
             { label: 'Database Transactions', slug: 'standards/database-transactions' },
             { label: 'Idempotency Protection', slug: 'standards/idempotency' },
             { label: 'Dual-Tier Rate Limiting', translations: { en: 'Dual-Tier Rate Limiting' }, slug: 'standards/rate-limiting' },
+            { label: 'Unified Object Storage', translations: { en: 'Unified Object Storage' }, slug: 'standards/storage' },
             { label: 'Frontend Skeleton Loading', slug: 'standards/frontend-loading' },
             { label: 'Package Security & Audit', slug: 'standards/package-security' },
             { label: 'Standardisasi Import', slug: 'standards/import-standards' },

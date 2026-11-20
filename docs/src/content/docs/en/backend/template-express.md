@@ -344,6 +344,27 @@ export default router
 
 ---
 
+## 📦 Unified Object Storage (MinIO, S3, Local)
+
+`template-express` provides a unified file storage abstraction in `src/services/storage/` supporting seamless switching between MinIO, AWS S3 / Cloudflare R2, and local disk storage.
+
+### 1. Unified Drivers & Pre-Signed URLs
+
+- **Driver Factory (`getStorageService()`)**: Dynamically resolves the `IStorageService` implementation (`LocalStorageDriver` or `S3StorageDriver`) based on `STORAGE_PROVIDER=minio|s3|local`.
+- **Pre-Signed Upload & Download URLs**: Exposes `getPresignedUploadUrl()` and `getPresignedDownloadUrl()` via `@aws-sdk/s3-request-presigner` for direct client-to-storage uploads without congesting backend server bandwidth.
+- **Path Traversal Guard**: `LocalStorageDriver` enforces `path.resolve()` validation to guarantee that local file operations never escape `storageConfig.localDir`.
+
+### 2. Upload Endpoints & Testcontainers Integration
+
+- **Upload Module Routes (`src/modules/uploads`)**:
+  - `POST /api/v1/uploads`: Accepts multipart uploads via Multer with file size (`MAX_FILE_SIZE`) and MIME-type validation boundaries.
+  - `GET /api/v1/uploads/:key`: Streams file content with proper HTTP `Content-Type`.
+  - `DELETE /api/v1/uploads/:key`: Idempotently deletes files from bucket or disk.
+  - `POST /api/v1/uploads/presigned-url`: Emits temporary presigned upload URLs.
+- **Testcontainers Test Suite**: `test/storage.test.ts` validates end-to-end upload, presigned generation, and deletion cycles against real MinIO containers, gracefully falling back to mocks when Docker is unavailable.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Zod schemas enforce structural validity at the gateway before request bodies reach handlers:

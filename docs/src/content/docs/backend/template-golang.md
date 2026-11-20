@@ -321,6 +321,27 @@ orders.Post("/", orderHandler.CreateOrder)
 
 ---
 
+## 📦 Unified Object Storage (MinIO, S3, Local)
+
+`template-golang` menyediakan interface penyimpanan terpadu di `pkg/storage/` dengan performa tinggi dan nol alokasi memori berlebih.
+
+### 1. Provider Terpadu & Pre-Signed URLs
+
+- **Storage Interface (`storage.Storage`)**: Mengabstraksi `Upload`, `Download`, `Delete`, `GetURL`, `GetPresignedUploadURL`, `GetPresignedDownloadURL`, dan `Exists`.
+- **Factory Provider (`NewStorage`)**: Mengembalikan driver `minio` / `s3` (berbasis `aws-sdk-go-v2`) atau `local` disk sesuai konfigurasi `STORAGE_PROVIDER`.
+- **Keamanan Path & Sanitasi**: Driver lokal menerapkan `filepath.Clean` dan verifikasi prefix direktori untuk mencegah eksploitasi directory traversal (`../`).
+
+### 2. Endpoint Upload & Integrasi Testcontainers
+
+- **Module Endpoints (`internal/app/http.go`)**:
+  - `POST /api/v1/uploads`: Menerima file multipart via Fiber `c.FormFile("file")` dengan validasi ukuran dan MIME type.
+  - `GET /api/v1/uploads/:key`: Mengunduh file langsung atau streaming response.
+  - `DELETE /api/v1/uploads/:key`: Menghapus objek dari storage.
+  - `POST /api/v1/uploads/presigned-url`: Membuat link upload pre-signed.
+- **Suite Pengujian Testcontainers**: `pkg/storage/storage_test.go` memverifikasi seluruh operasi penyimpanan menggunakan kontainer MinIO nyata via `testcontainers-go`.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Semua endpoint POST/PUT memakai binder `pkg/validation` yang menerima satu DTO untuk **tiga bentuk body sekaligus**:

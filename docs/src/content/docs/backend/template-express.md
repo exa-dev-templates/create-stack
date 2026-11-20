@@ -344,6 +344,27 @@ export default router
 
 ---
 
+## 📦 Unified Object Storage (MinIO, S3, Local)
+
+`template-express` menyediakan abstraksi penyimpanan berkas terpadu di `src/services/storage/` yang mendukung peralihan instan antara MinIO, AWS S3 / Cloudflare R2, dan sistem berkas lokal.
+
+### 1. Provider Terpadu & Pre-Signed URLs
+
+- **Driver Factory (`getStorageService()`)**: Mengembalikan instance implementasi `IStorageService` (`LocalStorageDriver` atau `S3StorageDriver`) secara dinamis sesuai variabel `STORAGE_PROVIDER=minio|s3|local`.
+- **Pre-Signed Upload & Download**: Menyediakan method `getPresignedUploadUrl()` dan `getPresignedDownloadUrl()` berbasis `@aws-sdk/s3-request-presigner` untuk upload langsung dari browser (*direct-to-S3*) tanpa membebani memori backend.
+- **Proteksi Path Traversal**: `LocalStorageDriver` memvalidasi `path.resolve()` agar penyimpanan berkas lokal tidak dapat ditembus keluar dari root `storageConfig.localDir`.
+
+### 2. Endpoint Upload & Integrasi Testcontainers
+
+- **Module Endpoints (`src/modules/uploads`)**:
+  - `POST /api/v1/uploads`: Menerima multipart file upload via Multer dengan validasi ukuran (`MAX_FILE_SIZE`) dan MIME type.
+  - `GET /api/v1/uploads/:key`: Streaming download file dengan header `Content-Type` yang sesuai.
+  - `DELETE /api/v1/uploads/:key`: Penghapusan berkas idempoten dari bucket/disk.
+  - `POST /api/v1/uploads/presigned-url`: Menghasilkan URL upload berbatas waktu untuk klien.
+- **Suite Pengujian Testcontainers**: File `test/storage.test.ts` memverifikasi siklus hidup penyimpanan menggunakan container MinIO nyata via Testcontainers, dengan *graceful fallback* ke in-memory/mock jika Docker tidak aktif.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi Zod memastikan semua request payload terdefinisi dengan skema kuat:

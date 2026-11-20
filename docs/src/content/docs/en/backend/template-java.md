@@ -326,6 +326,27 @@ public class OrderController {
 
 ---
 
+## 📦 Unified Object Storage (MinIO, S3, Local)
+
+`template-java` integrates a pluggable file storage abstraction in `com.example.template.java.file.service` tailored for Spring Boot.
+
+### 1. Unified Drivers & Pre-Signed URLs
+
+- **`StorageDriver` & `FileStorageService`**: Supports `LocalStorageDriver` and `S3StorageDriver` (powered by AWS SDK for Java v2) resolved via the `storage.provider=minio|s3|local` property.
+- **Pre-Signed URLs via AWS SDK v2**: Employs `S3Presigner` for `getPresignedUploadUrl()` and `getPresignedDownloadUrl()`, offloading file transfer throughput directly to S3/MinIO.
+- **Path Traversal Defense**: `LocalStorageDriver` validates normalized paths (`Path.normalize().toAbsolutePath()`) against base upload directory roots.
+
+### 2. Upload Endpoints & Testcontainers Integration
+
+- **File Controller Routes (`FileController.java`)**:
+  - `POST /api/files/upload`: Accepts `MultipartFile` payloads bounded by Spring multipart size limits.
+  - `GET /api/files/{fileName}`: Streams file downloads via Spring `Resource`.
+  - `DELETE /api/files/{fileName}`: Safely removes objects from storage.
+  - `POST /api/files/presigned-url`: Generates pre-signed upload URLs for clients.
+- **Testcontainers Integration**: Exercises storage drivers against real MinIO containers using Testcontainers during integration test suites.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Validates incoming DTO payloads using standard Jakarta Bean Validation:

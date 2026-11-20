@@ -326,6 +326,27 @@ public class OrderController {
 
 ---
 
+## 📦 Unified Object Storage (MinIO, S3, Local)
+
+`template-java` menyediakan abstraksi penyimpanan berkas terpadu di package `com.example.template.java.file.service` yang terintegrasi penuh dengan ekosistem Spring Boot.
+
+### 1. Provider Terpadu & Pre-Signed URLs
+
+- **Abstraksi `StorageDriver` & `FileStorageService`**: Mengimplementasikan `LocalStorageDriver` dan `S3StorageDriver` (berbasis AWS SDK for Java v2 S3 Client) yang diinisialisasi dinamis berdasarkan properti `storage.provider=minio|s3|local`.
+- **Pre-Signed URLs dengan AWS SDK v2**: Menyediakan `getPresignedUploadUrl()` dan `getPresignedDownloadUrl()` via `S3Presigner` untuk upload/download berkas langsung ke bucket MinIO/S3.
+- **Proteksi Path Traversal**: `LocalStorageDriver` memvalidasi `Path.normalize().toAbsolutePath()` untuk mencegah eksploitasi traversal ke luar direktori upload aplikasi.
+
+### 2. Endpoint Upload & Integrasi Testcontainers
+
+- **File Controller (`FileController.java`)**:
+  - `POST /api/files/upload`: Menerima `MultipartFile` dengan validasi ukuran (`spring.servlet.multipart.max-file-size`) dan ekstensi berkas.
+  - `GET /api/files/{fileName}`: Streaming pengunduhan berkas menggunakan `Resource` Spring Web.
+  - `DELETE /api/files/{fileName}`: Menghapus berkas dari storage.
+  - `POST /api/files/presigned-url`: Membuat URL presigned berbatas waktu.
+- **Suite Pengujian Testcontainers**: Menggunakan Testcontainers MinIO untuk menguji siklus hidup penyimpanan berkas secara terisolasi tanpa dependensi cloud eksternal.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi input menggunakan standard Jakarta Bean Validation (`@Valid`):

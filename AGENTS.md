@@ -51,6 +51,11 @@ Repositori ini adalah kumpulan template arsitektur standar untuk backend (Expres
 - **WAJIB PROPAGASI X-REQUEST-ID**: Setiap request yang masuk wajib diekstrak header `X-Request-ID`-nya (atau dibuatkan UUID unik baru), dikirim balik pada response headers, disertakan pada envelope JSON `BaseResponse.requestId`, serta disimpan dalam context store asynchronous thread-safe (`AsyncLocalStorage` di Node, `contextvars` di Python, `context.Context` di Go, `MDC` di Java, `tower_http::request_id` di Rust).
 - **KORELASI DISTRIBUSI & LOGGING**: Semua log terstruktur NDJSON dan trace OpenTelemetry wajib memuat `requestId` (beserta `traceId` & `spanId` saat tracing aktif) untuk korelasi end-to-end tanpa perlu mengoper parameter logger secara manual.
 
+### I. Unified Object Storage Driver (Rules: `.agents/rules/storage.md`)
+- **WAJIB ABSTRAKSI PENYIMPANAN**: Setiap service backend **WAJIB** mengekspos driver penyimpanan file seragam (`StorageService` / `StorageDriver`) tanpa vendor lock-in, mendukung `minio`, `s3`, dan `local` via `STORAGE_PROVIDER`.
+- **PRE-SIGNED URLS & KEAMANAN**: Wajib menyediakan method presigned upload/download URLs untuk efisiensi bandwidth server, serta memvalidasi canonical path pada driver `local` untuk mencegah celah Directory Traversal (`../`).
+- **PENGUJIAN TESTCONTAINERS**: Setiap backend menyertakan suite integration test (`storage.test`) berbasis Testcontainers MinIO untuk verifikasi siklus upload/download/delete secara terisolasi.
+
 ---
 
 ## 2. Struktur Template & Lokasi Modul

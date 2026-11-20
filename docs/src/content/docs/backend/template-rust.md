@@ -320,6 +320,27 @@ let app = Router::new()
 
 ---
 
+## 📦 Unified Object Storage (MinIO, S3, Local)
+
+`template-rust` mengimplementasikan driver penyimpanan objek asynchronous zero-overhead di `src/pkg/storage/` dengan trait `Storage`.
+
+### 1. Provider Terpadu & Pre-Signed URLs
+
+- **Trait Asinkron `Storage`**: Abstraksi `async_trait` yang mengimplementasikan `LocalStorage` dan `S3Storage` (mendukung MinIO, AWS S3, Cloudflare R2 via signature v4).
+- **Pre-Signed Upload & Download**: Method `get_presigned_upload_url()` dan `get_presigned_download_url()` menghasilkan link bertanda tangan kriptografis dengan jangka waktu kedaluwarsa.
+- **Proteksi Path Traversal**: `LocalStorage` menerapkan `canonicalize()` pada path dasar dan memverifikasi batas prefix direktori untuk menolak manipulasi path (`../`).
+
+### 2. Endpoint Upload & Integrasi Testcontainers
+
+- **Module Endpoints (`src/modules/uploads.rs`)**:
+  - `POST /api/v1/uploads`: Menerima multipart payload Axum dengan streaming byte `futures_util::StreamExt` ke storage driver.
+  - `GET /api/v1/uploads/*key`: Streaming pembacaan file dengan MIME sniffing otomatis.
+  - `DELETE /api/v1/uploads/*key`: Menghapus file secara idempoten.
+  - `POST /api/v1/uploads/presigned-url`: Membuat URL upload presigned.
+- **Suite Pengujian Testcontainers**: `tests/storage_test.rs` memvalidasi siklus operasi MinIO nyata menggunakan Testcontainers Rust dengan isolasi container Docker.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi DTO menggunakan custom Axum extractor `ValidatedJson<T>` di atas crate `validator`:

@@ -317,6 +317,27 @@ orders.Post("/", orderHandler.CreateOrder)
 
 ---
 
+## 📦 Unified Object Storage (MinIO, S3, Local)
+
+`template-golang` delivers a high-performance, low-allocation unified storage interface in `pkg/storage/`.
+
+### 1. Unified Drivers & Pre-Signed URLs
+
+- **Storage Interface (`storage.Storage`)**: Standardizes `Upload`, `Download`, `Delete`, `GetURL`, `GetPresignedUploadURL`, `GetPresignedDownloadURL`, and `Exists`.
+- **Driver Factory (`NewStorage`)**: Instantiates `minio` / `s3` (powered by `aws-sdk-go-v2`) or `local` disk drivers according to `STORAGE_PROVIDER`.
+- **Path Sanitization**: The local driver enforces `filepath.Clean` and root directory boundary checks to eliminate directory traversal risks (`../`).
+
+### 2. Upload Endpoints & Testcontainers Integration
+
+- **Upload Module Routes (`internal/app/http.go`)**:
+  - `POST /api/v1/uploads`: Processes multipart file uploads via Fiber `c.FormFile("file")` with size and MIME validation boundaries.
+  - `GET /api/v1/uploads/:key`: Streams file content or serves static assets.
+  - `DELETE /api/v1/uploads/:key`: Deletes objects from bucket or disk.
+  - `POST /api/v1/uploads/presigned-url`: Emits temporary pre-signed upload URLs.
+- **Testcontainers Test Suite**: `pkg/storage/storage_test.go` exercises the storage lifecycle against live MinIO containers spun up via `testcontainers-go`.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Endpoint requests use `pkg/validation` to bind and validate three payload formats into a single DTO:

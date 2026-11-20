@@ -25,17 +25,17 @@ flowchart LR
 
 ## 📊 Matriks Fitur 5 Backend
 
-| Template | Bahasa / Framework | Database & Transaksi | Realtime Engine | Distributed Bridge | Messaging | Rate Limiter | Request Context | OpenAPI Doc | Port |
-|---|---|---|---|---|---|---|---|---|---|
-| `template-express` | TypeScript / Express | Postgres / MySQL (`withTransaction`) | SSE & Socket.IO | Redis & RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `AsyncLocalStorage` | `/docs` | `5000` |
-| `template-fastapi-async` | Python / FastAPI | Postgres / MySQL (`@transactional`) | SSE & WebSocket | Redis Pub/Sub | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `contextvars` | `/docs` | `8000` |
-| `template-golang` | Go / Fiber v2 | Postgres / MySQL (`TransactionManager`) | SSE & WebSocket | Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `context.Context` | `/docs` | `8080` |
-| `template-java` | Java 17 / Spring Boot 4 | Postgres / MySQL (`@Transactional`) | SSE & STOMP /ws | Local, Redis, RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | SLF4J `MDC` | `/swagger-ui.html` | `8080` |
-| `template-rust` | Rust / Axum 0.7 | Postgres / MySQL (`&mut Transaction`) | SSE & WebSocket | Local, Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `tower` / `tracing` | `/docs` | `8080` |
+| Template | Bahasa / Framework | Database & Transaksi | Realtime Engine | Distributed Bridge | Messaging | Rate Limiter | Request Context | Object Storage | OpenAPI Doc | Port |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `template-express` | TypeScript / Express | Postgres / MySQL (`withTransaction`) | SSE & Socket.IO | Redis & RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `AsyncLocalStorage` | MinIO, S3, Local | `/docs` | `5000` |
+| `template-fastapi-async` | Python / FastAPI | Postgres / MySQL (`@transactional`) | SSE & WebSocket | Redis Pub/Sub | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `contextvars` | MinIO, S3, Local | `/docs` | `8000` |
+| `template-golang` | Go / Fiber v2 | Postgres / MySQL (`TransactionManager`) | SSE & WebSocket | Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `context.Context` | MinIO, S3, Local | `/docs` | `8080` |
+| `template-java` | Java 17 / Spring Boot 4 | Postgres / MySQL (`@Transactional`) | SSE & STOMP /ws | Local, Redis, RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | SLF4J `MDC` | MinIO, S3, Local | `/swagger-ui.html` | `8080` |
+| `template-rust` | Rust / Axum 0.7 | Postgres / MySQL (`&mut Transaction`) | SSE & WebSocket | Local, Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `tower` / `tracing` | MinIO, S3, Local | `/docs` | `8080` |
 
 ---
 
-## 🛡️ 8 Pilar Standar Wajib Backend
+## 🛡️ 9 Pilar Standar Wajib Backend
 
 ### 1. Pure Parameter-Passing Database Transactions
 Dilarang menyembunyikan atau menyimpan transaksi database di dalam `context.Context` (Go) atau task-local storage (Rust). Objek transaksi wajib dioper secara eksplisit sebagai argumen method/fungsi:
@@ -90,3 +90,6 @@ Setiap backend menerapkan proteksi laju request dua tingkat (Global API 100 req/
 
 ### 8. Request Context, Tracing & Correlation ID Propagation
 Semua backend wajib mengekstrak header `X-Request-ID` (atau membuat UUID v4 baru), mengembalikannya ke client via header response, menyematkannya ke dalam envelope `BaseResponse.requestId`, serta menyimpannya ke dalam storage konteks asynchronous thread-safe (Node `AsyncLocalStorage`, Python `contextvars`, Go `context.Context`, Java `MDC`, Rust `tower_http::request_id` + `tracing`) agar seluruh structured log NDJSON dan OpenTelemetry spans selalu membawa correlation ID yang sama.
+
+### 9. Unified Object Storage Driver (MinIO, S3, Local)
+Setiap backend template menyediakan driver penyimpanan objek terabstraksi (`StorageService` / `StorageDriver`) yang mendukung MinIO, AWS S3, Cloudflare R2, dan sistem berkas lokal. Fitur mencakup upload multipart, presigned upload/download URLs untuk efisiensi bandwidth, serta pengujian integration otomatis berbasis Testcontainers MinIO.

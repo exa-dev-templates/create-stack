@@ -320,6 +320,27 @@ let app = Router::new()
 
 ---
 
+## 📦 Unified Object Storage (MinIO, S3, Local)
+
+`template-rust` implements a zero-overhead asynchronous object storage driver in `src/pkg/storage/` via the `Storage` trait.
+
+### 1. Unified Drivers & Pre-Signed URLs
+
+- **Async `Storage` Trait**: `async_trait` abstraction backing `LocalStorage` and `S3Storage` (supporting MinIO, AWS S3, and Cloudflare R2 via AWS Signature v4).
+- **Pre-Signed Upload & Download URLs**: Cryptographically signs time-limited upload and download URLs via `get_presigned_upload_url()` and `get_presigned_download_url()`.
+- **Path Traversal Shield**: `LocalStorage` verifies canonical paths (`canonicalize()`) against the designated base directory to block relative path exploits (`../`).
+
+### 2. Upload Endpoints & Testcontainers Integration
+
+- **Upload Module Routes (`src/modules/uploads.rs`)**:
+  - `POST /api/v1/uploads`: Parses Axum multipart streams via `futures_util::StreamExt` directly into the storage engine.
+  - `GET /api/v1/uploads/*key`: Streams file content with automatic MIME sniffing.
+  - `DELETE /api/v1/uploads/*key`: Idempotently deletes files from bucket or disk.
+  - `POST /api/v1/uploads/presigned-url`: Issues presigned upload URLs.
+- **Testcontainers Integration**: `tests/storage_test.rs` verifies complete storage lifecycles against live MinIO Testcontainers instances in Docker.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Validates incoming DTO structures using `ValidatedJson<T>` on top of `validator`:

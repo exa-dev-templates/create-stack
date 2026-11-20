@@ -33,6 +33,7 @@ npm run infra:down
 | **Redis 7 (Alpine)** | `6379` | - | *Tanpa password (dev mode)* |
 | **RabbitMQ 3 (Alpine)** | `5672` (AMQP) | [http://localhost:15672](http://localhost:15672) | `guest` / `guest` |
 | **Apache Kafka 3.7 (KRaft)** | `9092` (Broker) | [http://localhost:8085](http://localhost:8085) *(Kafka UI)* | *None* |
+| **MinIO (S3 Object Storage)** | `9000` (API) | [http://localhost:9001](http://localhost:9001) *(Console)* | `minioadmin` / `minioadminpassword` |
 | **Mailpit** | `1025` (SMTP) | [http://localhost:8025](http://localhost:8025) *(Webmail)* | *None* |
 
 ---
@@ -45,6 +46,7 @@ Semua data kontainer disimpan dalam Docker Named Volumes terisolasi:
 - `redis_data`
 - `rabbitmq_data` (jika mengaktifkan RabbitMQ)
 - `kafka_data` (jika mengaktifkan Kafka)
+- `minio_data` (penyimpanan berkas MinIO S3 bucket `app-uploads`)
 
 > [!TIP]
 > Jika Anda ingin mereset total seluruh database lokal ke kondisi awal, jalankan:

@@ -33,6 +33,7 @@ npm run infra:down
 | **Redis 7 (Alpine)** | `6379` | - | *No password (dev mode)* |
 | **RabbitMQ 3 (Alpine)** | `5672` (AMQP) | [http://localhost:15672](http://localhost:15672) | `guest` / `guest` |
 | **Apache Kafka 3.7 (KRaft)** | `9092` (Broker) | [http://localhost:8085](http://localhost:8085) *(Kafka UI)* | *None* |
+| **MinIO (S3 Object Storage)** | `9000` (API) | [http://localhost:9001](http://localhost:9001) *(Console)* | `minioadmin` / `minioadminpassword` |
 | **Mailpit** | `1025` (SMTP) | [http://localhost:8025](http://localhost:8025) *(Webmail)* | *None* |
 
 ---
@@ -45,6 +46,7 @@ All container state is persisted in isolated Docker Named Volumes:
 - `redis_data`
 - `rabbitmq_data` (when RabbitMQ is enabled)
 - `kafka_data` (when Kafka is enabled)
+- `minio_data` (MinIO S3 object storage for bucket `app-uploads`)
 
 > [!TIP]
 > To perform a complete factory reset of your local database state, run:

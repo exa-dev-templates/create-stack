@@ -326,6 +326,27 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 ---
 
+## 📦 Unified Object Storage (MinIO, S3, Local)
+
+`template-fastapi-async` integrates an asynchronous object storage driver in `lib/storage.py` supporting MinIO, AWS S3 / Cloudflare R2, and local disk storage.
+
+### 1. Unified Drivers & Pre-Signed URLs
+
+- **Async `StorageService` Drivers**: Abstract class powering `LocalStorageService` and `S3StorageService` (using `aioboto3` / `botocore`) resolved dynamically via `STORAGE_PROVIDER`.
+- **Pre-Signed Upload & Download URLs**: `get_presigned_upload_url()` and `get_presigned_download_url()` allow browser direct-to-S3 uploads with configurable expiration windows.
+- **Path Traversal Protection**: `LocalStorageService` uses `Path.resolve()` and `is_relative_to()` boundary checks to deny traversal attacks outside the root upload directory.
+
+### 2. Upload Endpoints & Testcontainers Integration
+
+- **Upload Module Routes (`modules/uploads`)**:
+  - `POST /api/v1/uploads`: Accepts `UploadFile` multipart payloads with chunked async streaming for minimal memory footprint.
+  - `GET /api/v1/uploads/{key}`: Downloads files via `FileResponse` or streaming binary response.
+  - `DELETE /api/v1/uploads/{key}`: Removes objects from storage.
+  - `POST /api/v1/uploads/presigned-url`: Generates presigned upload URLs.
+- **Testcontainers Integration**: `tests/test_storage.py` runs end-to-end integration tests using MinIO Testcontainers in Docker.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Pydantic v2 schemas enforce structural validation before request execution:
