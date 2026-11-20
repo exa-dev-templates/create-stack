@@ -63,9 +63,17 @@ Jika request membawa key yang berstatus `completed` dan fingerprint cocok 100%:
 - Server langsung mengembalikan status code, headers (misal `Content-Type`), dan body JSON persis sama seperti response pertama kali.
 - Server menyematkan header `Idempotent-Replayed: true`.
 
-### 4. Automatic Unlock on 5xx Failures
-Jika selama proses eksekusi terjadi error internal server (HTTP 5xx, koneksi database timeout, atau panic):
-- Middleware secara otomatis menghapus lock (`DEL idempotency:...`) agar client dapat mencoba kembali (*retry safely*) tanpa tertahan oleh lock lama.
+### 4. Kebijakan Caching Response & Automatic Unlock pada Transient Errors
+Sesuai IETF draft dan best practice distributed systems, **tidak semua status HTTP boleh dicache**:
+
+| Kategori | Status Code | Tindakan Idempotency | Alasan |
+|---|---|---|---|
+| **Success** | `200`, `201`, `204` | **Cache & Replay** | Transaksi selesai dengan sukses. Replay cached response untuk mencegah duplikasi. |
+| **Deterministic Client Errors** | `400`, `404`, `422` | **Cache & Replay** | Error validasi/bisnis pasti gagal jika diulang dengan payload yang sama. Menghemat query DB. |
+| **Server Failures** | `500`, `502`, `503`, `504` | **UNLOCK (Hapus Lock)** | Kesalahan internal server/database timeout bersifat transient; client wajib dapat mencoba kembali (*retry safely*). |
+| **Rate Limiting** | `429` | **UNLOCK (Hapus Lock)** | Jika 429 dicache, transaksi akan gagal selamanya bahkan setelah jendela rate limit berlalu! |
+| **Auth Expiration** | `401` | **UNLOCK (Hapus Lock)** | Token akses kadaluarsa; frontend akan me-refresh token lalu melakukan retry dengan key yang sama. |
+| **Network & Concurrency** | `408`, `409`, `425` | **UNLOCK (Hapus Lock)** | Request timeout atau konflik konkurensi in-flight bersifat sementara. |
 
 ---
 
@@ -181,36 +189,38 @@ let app = Router::new()
 ## 🌐 Implementasi di Frontend (`template-react` & `template-vue`)
 
 Di layer frontend, auto-inject `Idempotency-Key` secara buta (*blindly*) pada seluruh HTTP request mutasi (`POST`/`PUT`/`PATCH`) adalah **anti-pattern** karena:
-1. **Kegagalan Retry:** Jika network terputus saat submit form dan user menekan tombol "Coba Lagi", request retry **wajib menggunakan key yang sama** dengan request awal agar server dapat mengenali idempotency / replay response cached, bukan membuat entri duplikat baru.
-2. **Overhead Endpoint Non-Krusial:** Endpoint mutasi ringan (seperti analytics logging, telemetry, atau auth login) tidak memerlukan overhead distributed locking di Redis.
+1. **Kegagalan Browser Refresh:** Jika form di-refresh (F5/reload) saat transaksi in-flight atau sebelum submit, in-memory state biasa akan terhapus dan meng-generate key baru. User yang menekan tombol *Bayar* lagi setelah refresh akan memicu transaksi ganda (*double charge*).
+2. **Kegagalan Timeout & Retry:** Jika request mengalami timeout jaringan (misal 15 detik), request retry **wajib membawa key yang sama persis** dengan request awal agar server dapat mengenali replay response atau status `in_progress` (409 Conflict), bukan mengeksekusi order baru.
+3. **Overhead Endpoint Non-Krusial:** Endpoint mutasi ringan (seperti analytics logging, telemetry, atau auth login) tidak memerlukan overhead distributed locking di Redis.
 
-Oleh karena itu, arsitektur frontend di monorepo ini menerapkan pendekatan **opt-in declarative dengan lifecycle-aware hook/composable**:
+Oleh karena itu, arsitektur frontend di monorepo ini menerapkan pendekatan **Session-Persisted, Scope-Based Idempotency**:
 
-### 1. Zero-Bloat Key Generator (`src/utils/idempotency.ts`)
-Menggunakan Web Crypto API bawaan browser (`crypto.randomUUID()` dengan fallback cryptographically secure `crypto.getRandomValues()`), tanpa menambah dependensi library eksternal (0-bloat):
+### 1. Zero-Bloat Key Generator & Persistence (`src/utils/idempotency.ts`)
+Menggunakan Web Crypto API bawaan browser (`crypto.randomUUID()` dengan fallback cryptographically secure `crypto.getRandomValues()`), serta helper persistensi `sessionStorage` dengan TTL (30 menit):
 
 ```typescript
-import { generateIdempotencyKey } from '@/utils'
+import { generateIdempotencyKey, getOrCreateIdempotencyKey } from '@/utils'
 
-const key = generateIdempotencyKey() // "550e8400-e29b-41d4-a716-446655440000"
+// Key yang bertahan walau browser di-refresh (F5) selama sesi transaksi aktif
+const key = getOrCreateIdempotencyKey('checkout-form')
 ```
 
-### 2. Konfigurasi Axios & Request Interceptor (`src/api/client.ts`)
-Menyediakan integrasi langsung pada Axios request config dan interceptor:
+### 2. Konfigurasi Axios & In-Place Key Retention (`src/api/client.ts`)
+Interceptors Axios secara cerdas menyimpan hasil generate key ke properti `config.idempotencyKey` sebagai string. Jika terjadi **timeout jaringan** atau **retry otomatis**, Axios akan menggunakan key yang **sama persis**, bukan membuat key baru:
 
 ```typescript
-// Opsi A: Generate otomatis key baru
+// Opsi A: Generate otomatis & pertahankan key jika terjadi retry / timeout
 await api.post('/api/orders', orderData, { idempotencyKey: true })
 
-// Opsi B: Gunakan key spesifik yang dikontrol form lifecycle (untuk retry safely)
-await api.post('/api/orders', orderData, { idempotencyKey: formIdempotencyKey })
+// Opsi B: Gunakan key spesifik dari hook/form scope
+await api.post('/api/orders', orderData, { idempotencyKey: orderKey })
 
 // Opsi C: Menggunakan shortcut apiClient.idempotent
 await apiClient.idempotent.post('/api/orders', orderData)
 ```
 
 ### 3. Lifecycle-Aware Hook di React (`useIdempotencyKey`)
-Mengelola stabilitas key selama form aktif, mempertahankan key yang sama saat terjadi retry network error, dan me-refresh key setelah operasi sukses:
+Mendukung `scope` untuk persistensi `sessionStorage` (tahan refresh F5), serta wrapper helper `execute()` yang otomatis me-refresh key hanya saat transaksi sukses (2xx) dan mempertahankan key saat terjadi error/timeout:
 
 ```tsx
 import React, { useState } from 'react'
@@ -218,20 +228,23 @@ import { apiClient } from '@/api/client'
 import { useIdempotencyKey } from '@/hooks'
 
 export const CheckoutForm: React.FC = () => {
-  const { key, refreshKey } = useIdempotencyKey()
+  // Key tersimpan di sessionStorage untuk scope 'checkout-order' (aman dari refresh F5)
+  const { key, execute } = useIdempotencyKey('checkout-order')
   const [loading, setLoading] = useState(false)
 
   const handleCheckout = async () => {
     setLoading(true)
     try {
-      // Menggunakan key yang sama saat retry otomatis/manual
-      await apiClient.idempotent.post('/api/orders', { amount: 150000 }, key)
-      
-      // Refresh key baru setelah transaksi sukses
-      refreshKey()
+      // execute() secara otomatis:
+      // 1. Mengirim request dengan key aktif
+      // 2. Jika timeout / network error: key TETAP disimpan untuk retry
+      // 3. Jika sukses (2xx): key di-refresh otomatis untuk transaksi berikutnya
+      await execute(async (activeKey) => {
+        return await apiClient.idempotent.post('/api/orders', { amount: 150000 }, activeKey)
+      })
       alert('Pesanan berhasil dibuat!')
     } catch (error) {
-      // Key TETAP dipertahankan agar user dapat klik "Coba Lagi" tanpa duplikasi mutasi
+      // Key tetap utuh di sessionStorage, user dapat klik "Coba Lagi" tanpa khawatir double charging
       console.error('Checkout gagal:', error)
     } finally {
       setLoading(false)
@@ -255,14 +268,17 @@ import { ref } from 'vue'
 import { apiClient } from '@/api/client'
 import { useIdempotencyKey } from '@/composables'
 
-const { key, refreshKey } = useIdempotencyKey()
+// Scope 'checkout-order' bertahan saat browser di-refresh
+const { key, execute } = useIdempotencyKey('checkout-order')
 const loading = ref(false)
 
 const handleCheckout = async () => {
   loading.value = true
   try {
-    await apiClient.idempotent.post('/api/orders', { amount: 150000 }, key.value)
-    refreshKey()
+    await execute(async (activeKey) => {
+      return await apiClient.idempotent.post('/api/orders', { amount: 150000 }, activeKey)
+    })
+    alert('Pesanan berhasil dibuat!')
   } catch (error) {
     // Key tetap dipertahankan untuk retry yang aman
   } finally {

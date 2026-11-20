@@ -63,9 +63,17 @@ When a completed key matches the payload fingerprint 100%:
 - The server replays the original status code, headers (e.g. `Content-Type`), and response body verbatim.
 - The server appends the header `Idempotent-Replayed: true`.
 
-### 4. Automatic Unlock on 5xx Failures
-If internal infrastructure errors occur during processing (HTTP 5xx, database timeouts, or runtime panics):
-- The middleware automatically evicts the lock (`DEL idempotency:...`) so the client can safely retry without being locked out.
+### 4. Response Caching Policy & Automatic Unlock on Transient Errors
+In compliance with IETF draft standards and distributed systems best practices, **not all HTTP statuses may be cached**:
+
+| Category | Status Code | Idempotency Action | Reason |
+|---|---|---|---|
+| **Success** | `200`, `201`, `204` | **Cache & Replay** | Business mutation completed. Replay cached response to prevent duplicate execution. |
+| **Deterministic Client Errors** | `400`, `404`, `422` | **Cache & Replay** | Business/validation logic deterministically rejects payload. Prevents redundant DB queries. |
+| **Server Failures** | `500`, `502`, `503`, `504` | **UNLOCK (Release Key)** | Server crashes and timeouts are transient; clients must be permitted to retry. |
+| **Rate Limiting** | `429` | **UNLOCK (Release Key)** | Caching 429 would poison the key permanently, preventing execution even after rate limit expires! |
+| **Auth Expiration** | `401` | **UNLOCK (Release Key)** | Access token expired; frontend will refresh token and retry with the same key. |
+| **Network & Concurrency** | `408`, `409`, `425` | **UNLOCK (Release Key)** | Request timeout or in-flight concurrency locks are transient states. |
 
 ---
 
@@ -181,36 +189,38 @@ let app = Router::new()
 ## 🌐 Frontend Implementation (`template-react` & `template-vue`)
 
 On the client side, blindly auto-generating an `Idempotency-Key` on every single mutating HTTP request (`POST`/`PUT`/`PATCH`) is an **anti-pattern** because:
-1. **Retry Failures:** If a network failure occurs when submitting a form and the user clicks "Retry", the retry request **must reuse the exact same key** so the server recognizes the idempotent replay or ongoing lock rather than generating duplicate mutations.
-2. **Non-Critical Endpoints:** Lightweight mutation requests (e.g., telemetry, analytics, search tracking) do not warrant distributed locking overhead in Redis.
+1. **Page Refresh Failures:** If a form is reloaded (F5/browser refresh) while an order is in-flight or before submit, pure in-memory state is erased and generates a new key. Submitting again results in double charging!
+2. **Timeout & Retry Failures:** If a request times out (e.g. 15s network timeout), subsequent retries **must reuse the exact same key** so the server recognizes the idempotent replay or ongoing `in_progress` lock rather than creating duplicate mutations.
+3. **Non-Critical Endpoints:** Lightweight mutation requests (e.g., telemetry, analytics, search tracking) do not warrant distributed locking overhead in Redis.
 
-Thus, both frontend templates implement a **declarative opt-in pattern with lifecycle-aware hooks/composables**:
+Thus, both frontend templates implement a **Session-Persisted, Scope-Based Idempotency Architecture**:
 
-### 1. Zero-Bloat Key Generator (`src/utils/idempotency.ts`)
-Uses the browser's native Web Crypto API (`crypto.randomUUID()` with a cryptographically secure fallback using `crypto.getRandomValues()`), without external packages (0 bloat):
+### 1. Zero-Bloat Key Generator & Persistence (`src/utils/idempotency.ts`)
+Uses the browser's native Web Crypto API (`crypto.randomUUID()` with a cryptographically secure fallback using `crypto.getRandomValues()`), and a `sessionStorage` persistence layer with TTL (30 minutes):
 
 ```typescript
-import { generateIdempotencyKey } from '@/utils'
+import { generateIdempotencyKey, getOrCreateIdempotencyKey } from '@/utils'
 
-const key = generateIdempotencyKey() // "550e8400-e29b-41d4-a716-446655440000"
+// Survives browser page reload (F5) during the active transaction session
+const key = getOrCreateIdempotencyKey('checkout-form')
 ```
 
-### 2. Axios Request Config & Interceptor (`src/api/client.ts`)
-Integrated directly into the Axios client and interceptors:
+### 2. Axios Request Config & In-Place Key Retention (`src/api/client.ts`)
+The Axios interceptor mutates `config.idempotencyKey` in-place into the generated string key. If a **network timeout** or **retry** happens on that config, Axios uses the **exact same key**:
 
 ```typescript
-// Option A: Automatically generate a fresh UUID key
+// Option A: Automatically generate & retain key across retries / timeout
 await api.post('/api/orders', orderData, { idempotencyKey: true })
 
-// Option B: Provide a specific lifecycle-managed key (for safe retries)
-await api.post('/api/orders', orderData, { idempotencyKey: formIdempotencyKey })
+// Option B: Provide a scoped key from hook / form session
+await api.post('/api/orders', orderData, { idempotencyKey: orderKey })
 
 // Option C: Use ergonomic apiClient.idempotent shortcuts
 await apiClient.idempotent.post('/api/orders', orderData)
 ```
 
 ### 3. Lifecycle-Aware Hook in React (`useIdempotencyKey`)
-Maintains key stability across component re-renders, retains the same key during network retries, and refreshes upon success:
+Supports `scope` for `sessionStorage` persistence (F5 reload-safe) and an `execute()` wrapper that refreshes the key only on success (2xx) while preserving the key on error or timeout:
 
 ```tsx
 import React, { useState } from 'react'
@@ -218,17 +228,23 @@ import { apiClient } from '@/api/client'
 import { useIdempotencyKey } from '@/hooks'
 
 export const CheckoutForm: React.FC = () => {
-  const { key, refreshKey } = useIdempotencyKey()
+  // Key stored in sessionStorage for 'checkout-order' scope (survives F5 refresh)
+  const { key, execute } = useIdempotencyKey('checkout-order')
   const [loading, setLoading] = useState(false)
 
   const handleCheckout = async () => {
     setLoading(true)
     try {
-      await apiClient.idempotent.post('/api/orders', { amount: 150000 }, key)
-      refreshKey() // Refresh key only on success
+      // execute() automatically:
+      // 1. Sends request with the active key
+      // 2. On timeout / network error: RETAINS the key for safe retry
+      // 3. On success (2xx): automatically refreshes key for next order
+      await execute(async (activeKey) => {
+        return await apiClient.idempotent.post('/api/orders', { amount: 150000 }, activeKey)
+      })
       alert('Order placed successfully!')
     } catch (error) {
-      // Key is preserved for safe retry without duplicate processing
+      // Key remains intact in sessionStorage; user can safely click retry
       console.error('Checkout failed:', error)
     } finally {
       setLoading(false)
@@ -252,14 +268,17 @@ import { ref } from 'vue'
 import { apiClient } from '@/api/client'
 import { useIdempotencyKey } from '@/composables'
 
-const { key, refreshKey } = useIdempotencyKey()
+// Scoped key survives browser refresh
+const { key, execute } = useIdempotencyKey('checkout-order')
 const loading = ref(false)
 
 const handleCheckout = async () => {
   loading.value = true
   try {
-    await apiClient.idempotent.post('/api/orders', { amount: 150000 }, key.value)
-    refreshKey()
+    await execute(async (activeKey) => {
+      return await apiClient.idempotent.post('/api/orders', { amount: 150000 }, activeKey)
+    })
+    alert('Order placed successfully!')
   } catch (error) {
     // Key is preserved for safe retry
   } finally {
