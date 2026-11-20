@@ -86,6 +86,7 @@ export default defineConfig({
             { label: 'Semantic Error Handling', slug: 'standards/error-handling' },
             { label: 'Database Transactions', slug: 'standards/database-transactions' },
             { label: 'Idempotency Protection', slug: 'standards/idempotency' },
+            { label: 'Dual-Tier Rate Limiting', translations: { en: 'Dual-Tier Rate Limiting' }, slug: 'standards/rate-limiting' },
             { label: 'Frontend Skeleton Loading', slug: 'standards/frontend-loading' },
             { label: 'Package Security & Audit', slug: 'standards/package-security' },
             { label: 'Standardisasi Import', slug: 'standards/import-standards' },

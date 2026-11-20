@@ -293,6 +293,29 @@ export default router
 
 ---
 
+## 🚦 Dual-Tier Rate Limiting & Proteksi DoS
+
+`template-express` menyediakan middleware proteksi laju request dua tingkat di `src/middleware/rateLimiter.ts`:
+
+### 1. Tingkatan Proteksi: Global API vs Strict Auth
+
+1. **Global Rate Limiter (`globalRateLimiter`)**:
+   - Melindungi seluruh endpoint API dengan kuota `RATE_LIMIT_MAX` (default: 100 req / 60 detik per IP).
+   - Diaktifkan secara global di `src/app.ts`: `app.use(globalRateLimiter)`.
+   - Mengabaikan (*whitelist*) route `/health`, `/`, `/docs`, dan `/swagger`.
+2. **Strict Auth Limiter (`authRateLimiter`)**:
+   - Melindungi endpoint autentikasi (`/auth/login`, `/auth/register`) dari serangan *brute force*.
+   - Kuota ketat `RATE_LIMIT_AUTH_MAX` (default: 5 req / 60 detik).
+   - Key generator komposit: `${ip}:${email}:${path}`.
+
+### 2. Header Standar RFC 6585 & Storage Hybrid
+
+- **Header RFC 6585**: Menyertakan `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, dan `Retry-After` (saat HTTP 429).
+- **Format Response**: Mengembalikan status `429 Too Many Requests` dengan format `ApiResponse.error(message, RESPONSE_CODES.RATE_LIMIT_EXCEEDED)`.
+- **Hybrid Storage**: Menggunakan Redis atomik (`INCR` + `EXPIRE`) jika `RATE_LIMIT_STORAGE=redis`, dan otomatis *fallback* ke in-memory `Map` lokal jika Redis tidak tersedia.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi Zod memastikan semua request payload terdefinisi dengan skema kuat:

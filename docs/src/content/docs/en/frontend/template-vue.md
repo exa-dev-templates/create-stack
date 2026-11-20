@@ -170,6 +170,13 @@ api.interceptors.response.use(
 
 To avoid redundant UI toast boilerplate across API calls, the Axios interceptor dispatches a window event `api:toast` upon network disconnects or 4xx/5xx HTTP errors:
 
+- **HTTP 429 Rate Limit Handling**: When rate limits are breached, the interceptor parses the `Retry-After` header from the response and surfaces a warning toast: `"Too many requests. Please try again after <seconds> seconds."` with the semantic code `RATE_LIMIT_EXCEEDED`.
+- **Network / Offline Detection**: Triggers a `Network Error` toast when the client device is offline or the server is unreachable.
+- **The `skipToast` Option**: For requests requiring custom inline error handling without global notifications, pass `{ skipToast: true }`:
+  ```typescript
+  await apiClient.get('/users/check-email', { skipToast: true });
+  ```
+
 ```typescript title="src/utils/toast.ts"
 export interface ApiToastDetail {
   severity?: 'success' | 'info' | 'warn' | 'error';

@@ -279,6 +279,29 @@ let app = Router::new()
 
 ---
 
+## 🚦 Dual-Tier Rate Limiting & DoS Protection
+
+`template-rust` provides a Tokio async `RateLimiter` module in `src/pkg/ratelimit/`:
+
+### 1. Protection Tiers: Global API vs Strict Auth
+
+1. **Global Rate Limiter**:
+   - Caps general API calls at `RATE_LIMIT_MAX` (default: 100 req / 60 seconds per IP).
+   - Mounted on the Axum router in `src/lib.rs`: `.layer(middleware::from_fn_with_state(global_limiter, global_rate_limit_middleware))`.
+   - Whitelists health probes (`/health`, `/`) and documentation (`/docs`, `/swagger-ui`).
+2. **Strict Auth Limiter**:
+   - Protects authentication routes (`/api/v1/auth/login`, `/api/v1/auth/register`) against brute force.
+   - Enforces strict quota `RATE_LIMIT_AUTH_MAX` (default: 5 req / 60 seconds).
+   - Composite key generator: `ip + ":" + path`.
+
+### 2. RFC 6585 Standard Headers & Hybrid Storage
+
+- **RFC 6585 Headers**: Emits `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, and `Retry-After` (on HTTP 429).
+- **Response Format**: Returns HTTP `429 Too Many Requests` envelope `BaseResponse::error("Too many requests...", CODE_RATE_LIMIT_EXCEEDED)`.
+- **In-Memory Concurrency**: Thread-safe `Arc<Mutex<HashMap<String, (u64, Instant)>>>` with automatic periodic eviction for high performance without external overhead.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Validates incoming DTO structures using `ValidatedJson<T>` on top of `validator`:

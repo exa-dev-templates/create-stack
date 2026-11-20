@@ -171,6 +171,13 @@ api.interceptors.response.use(
 
 Untuk mencegah kode boilerplate toast berulang di setiap pemanggilan API, Axios interceptor secara otomatis menyiarkan event global `api:toast` pada kegagalan jaringan atau HTTP 4xx/5xx:
 
+- **Deteksi HTTP 429 (Rate Limit Exceeded)**: Jika client melebihi kuota request, interceptor membaca header `Retry-After` dari respons backend dan secara otomatis menampilkan toast peringatan: `"Too many requests. Please try again after <detik> seconds."` dengan title `RATE_LIMIT_EXCEEDED`.
+- **Network / Offline Fallback**: Menampilkan toast `Network Error` saat perangkat terputus dari koneksi internet atau gateway tidak terjangkau.
+- **Opsi `skipToast`**: Jika sebuah pemanggilan API ingin menangani error secara kustom tanpa memunculkan toast otomatis, cukup sertakan opsi `{ skipToast: true }` pada konfigurasi request:
+  ```typescript
+  await apiClient.get('/users/check-email', { skipToast: true });
+  ```
+
 ```typescript title="src/utils/toast.ts"
 export interface ApiToastDetail {
   severity?: 'success' | 'info' | 'warn' | 'error';

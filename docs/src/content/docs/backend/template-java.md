@@ -280,6 +280,29 @@ public class OrderController {
 
 ---
 
+## 🚦 Dual-Tier Rate Limiting & Proteksi DoS
+
+`template-java` mengintegrasikan `RateLimitFilter` berbasis Spring `@Component` di `com.example.template.java.common.ratelimit`:
+
+### 1. Tingkatan Proteksi: Global API vs Strict Auth
+
+1. **Global Rate Limiter**:
+   - Membatasi request umum dengan kuota `rate-limit.max` (default: 100 req / 60 detik per IP).
+   - Dijalankan sebagai servlet filter prioritas tinggi (`@Order(Ordered.HIGHEST_PRECEDENCE + 15)`).
+   - Mengabaikan (*whitelist*) route `/health`, `/`, `/swagger-ui/**`, dan `/v3/api-docs/**`.
+2. **Strict Auth Limiter**:
+   - Membatasi rute autentikasi (`/api/auth/login`, `/api/auth/register`) dari serangan *brute force*.
+   - Kuota ketat `rate-limit.auth-max` (default: 5 req / 60 detik).
+   - Key generator komposit: `rl:auth:{client_ip}:{path}`.
+
+### 2. Header Standar RFC 6585 & Storage Hybrid
+
+- **Header RFC 6585**: Menyertakan `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, dan `Retry-After` (saat HTTP 429).
+- **Format Response**: Mengembalikan status `429 Too Many Requests` envelope `BaseResponse.error("Too many requests...", ApiCode.RATE_LIMIT_EXCEEDED)`.
+- **Hybrid Storage**: Menggunakan `StringRedisTemplate` atomik (`opsForValue().increment()`) jika `rate-limit.storage=redis`, dan otomatis *fallback* ke `ConcurrentHashMap` lokal berbasis `AtomicLong` jika Redis tidak tersedia.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi input menggunakan standard Jakarta Bean Validation (`@Valid`):

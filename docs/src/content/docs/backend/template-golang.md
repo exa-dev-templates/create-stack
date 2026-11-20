@@ -269,6 +269,29 @@ orders.Post("/", orderHandler.CreateOrder)
 
 ---
 
+## 🚦 Dual-Tier Rate Limiting & Proteksi DoS
+
+`template-golang` menyediakan middleware proteksi laju request dua tingkat di `pkg/middleware/ratelimit/`:
+
+### 1. Tingkatan Proteksi: Global API vs Strict Auth
+
+1. **Global Rate Limiter (`NewGlobalLimiter`)**:
+   - Membatasi request ke seluruh API dengan kuota `RATE_LIMIT_MAX` (default: 100 req / 60 detik per IP).
+   - Dipasang pada level root Fiber di `internal/app/http.go`: `app.Use(ratelimit.NewGlobalLimiter(cfg.RateLimit, redisClient))`.
+   - Mengabaikan (*whitelist*) route `/health`, `/`, `/docs`, dan `/swagger`.
+2. **Strict Auth Limiter (`NewAuthLimiter`)**:
+   - Membatasi rute autentikasi (`/api/v1/auth/login`, `/api/v1/auth/register`) dari serangan *brute force*.
+   - Kuota ketat `RATE_LIMIT_AUTH_MAX` (default: 10 req / 60 detik).
+   - Key generator komposit: `c.IP() + ":" + c.Path()`.
+
+### 2. Header Standar RFC 6585 & Storage Hybrid
+
+- **Header RFC 6585**: Menyertakan `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, dan `Retry-After` (saat HTTP 429).
+- **Format Response**: Mengembalikan status `429 Too Many Requests` envelope `response.ErrorResponse(c, fiber.StatusTooManyRequests, constants.MsgRateLimitExceeded, constants.CodeRateLimitExceeded)`.
+- **Hybrid Storage**: Menggunakan `NewRedisFiberStorage(redisClient, ...)` jika `RATE_LIMIT_STORAGE=redis`, dan otomatis *fallback* ke in-memory Fiber storage lokal jika Redis tidak tersedia.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Semua endpoint POST/PUT memakai binder `pkg/validation` yang menerima satu DTO untuk **tiga bentuk body sekaligus**:

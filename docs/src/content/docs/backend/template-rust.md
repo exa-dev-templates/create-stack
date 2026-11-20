@@ -279,6 +279,29 @@ let app = Router::new()
 
 ---
 
+## 🚦 Dual-Tier Rate Limiting & Proteksi DoS
+
+`template-rust` menyediakan modul `RateLimiter` berbasis Tokio async di `src/pkg/ratelimit/`:
+
+### 1. Tingkatan Proteksi: Global API vs Strict Auth
+
+1. **Global Rate Limiter**:
+   - Membatasi request umum dengan kuota `RATE_LIMIT_MAX` (default: 100 req / 60 detik per IP).
+   - Dipasang pada Axum router di `src/lib.rs`: `.layer(middleware::from_fn_with_state(global_limiter, global_rate_limit_middleware))`.
+   - Mengabaikan (*whitelist*) route `/health`, `/`, `/docs`, dan `/swagger-ui`.
+2. **Strict Auth Limiter**:
+   - Membatasi route autentikasi (`/api/v1/auth/login`, `/api/v1/auth/register`) dari serangan *brute force*.
+   - Kuota ketat `RATE_LIMIT_AUTH_MAX` (default: 5 req / 60 detik).
+   - Key generator komposit: `ip + ":" + path`.
+
+### 2. Header Standar RFC 6585 & Storage Hybrid
+
+- **Header RFC 6585**: Menyertakan `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, dan `Retry-After` (saat HTTP 429).
+- **Format Response**: Mengembalikan status `429 Too Many Requests` envelope `BaseResponse::error("Too many requests...", CODE_RATE_LIMIT_EXCEEDED)`.
+- **In-Memory Concurrency**: Menggunakan `Arc<Mutex<HashMap<String, (u64, Instant)>>>` yang thread-safe dengan auto-eviction otomatis untuk performa tinggi tanpa overhead eksternal.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi DTO menggunakan custom Axum extractor `ValidatedJson<T>` di atas crate `validator`:

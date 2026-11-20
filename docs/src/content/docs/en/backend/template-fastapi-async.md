@@ -284,6 +284,29 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 ---
 
+## 🚦 Dual-Tier Rate Limiting & DoS Protection
+
+`template-fastapi-async` integrates `RateLimiterMiddleware` in `middleware/rate_limiter.py`:
+
+### 1. Protection Tiers: Global API vs Strict Auth
+
+1. **Global Rate Limiter**:
+   - Limits general request volume with `RATE_LIMIT_MAX` (default: 100 req / 60 seconds per IP).
+   - Mounted globally in `app.py`: `app.add_middleware(RateLimiterMiddleware)`.
+   - Whitelists health probes (`/health`, `/`) and documentation (`/docs`, `/redoc`, `/openapi.json`).
+2. **Strict Auth Limiter**:
+   - Protects authentication routes (`/auth/login`, `/auth/register`) against brute force.
+   - Enforces strict quota `RATE_LIMIT_AUTH_MAX` (default: 5 req / 60 seconds).
+   - Composite key generator: `rl:auth:{client_ip}:{path}`.
+
+### 2. RFC 6585 Standard Headers & Hybrid Storage
+
+- **RFC 6585 Headers**: Emits `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, and `Retry-After` (on HTTP 429).
+- **Response Format**: Returns HTTP `429 Too Many Requests` envelope `error_response(message, code=RATE_LIMIT_EXCEEDED)`.
+- **Hybrid Storage**: Uses Redis pipeline operations (`INCR` + `EXPIRE`) when `RATE_LIMIT_STORAGE=redis`, automatically falling back to an asyncio-locked in-memory store if Redis is unavailable.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Pydantic v2 schemas enforce structural validation before request execution:

@@ -293,6 +293,29 @@ export default router
 
 ---
 
+## 🚦 Dual-Tier Rate Limiting & DoS Protection
+
+`template-express` provides dual-tier rate limiting middleware in `src/middleware/rateLimiter.ts`:
+
+### 1. Protection Tiers: Global API vs Strict Auth
+
+1. **Global Rate Limiter (`globalRateLimiter`)**:
+   - Protects open API endpoints with `RATE_LIMIT_MAX` (default: 100 req / 60 seconds per IP).
+   - Mounted globally in `src/app.ts`: `app.use(globalRateLimiter)`.
+   - Whitelists health probes (`/health`, `/`) and documentation (`/docs`, `/swagger`).
+2. **Strict Auth Limiter (`authRateLimiter`)**:
+   - Shields sensitive authentication endpoints (`/auth/login`, `/auth/register`) against brute force.
+   - Enforces strict quota `RATE_LIMIT_AUTH_MAX` (default: 5 req / 60 seconds).
+   - Composite key generator: `${ip}:${email}:${path}`.
+
+### 2. RFC 6585 Standard Headers & Hybrid Storage
+
+- **RFC 6585 Headers**: Emits `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, and `Retry-After` (on HTTP 429).
+- **Response Format**: Returns HTTP `429 Too Many Requests` envelope `ApiResponse.error(message, RESPONSE_CODES.RATE_LIMIT_EXCEEDED)`.
+- **Hybrid Storage**: Leverages atomic Redis (`INCR` + `EXPIRE`) when `RATE_LIMIT_STORAGE=redis`, with automatic seamless failover to an in-memory `Map` cache if Redis disconnects.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Zod schemas enforce structural validity at the gateway before request bodies reach handlers:

@@ -25,17 +25,17 @@ flowchart LR
 
 ## 📊 Feature Matrix across 5 Backends
 
-| Template | Language / Framework | Database & Transactions | Realtime Engine | Distributed Bridge | Messaging | OpenAPI Doc | Port |
-|---|---|---|---|---|---|---|---|
-| `template-express` | TypeScript / Express | Postgres / MySQL (`withTransaction`) | SSE & Socket.IO | Redis & RabbitMQ | RabbitMQ & Kafka | `/docs` | `5000` |
-| `template-fastapi-async` | Python / FastAPI | Postgres / MySQL (`@transactional`) | SSE & WebSocket | Redis Pub/Sub | RabbitMQ & Kafka | `/docs` | `8000` |
-| `template-golang` | Go / Fiber v2 | Postgres / MySQL (`TransactionManager`) | SSE & WebSocket | Redis, RabbitMQ, Both | RabbitMQ & Kafka | `/docs` | `8080` |
-| `template-java` | Java 17 / Spring Boot 4 | Postgres / MySQL (`@Transactional`) | SSE & STOMP /ws | Local, Redis, RabbitMQ | RabbitMQ & Kafka | `/swagger-ui.html` | `8080` |
-| `template-rust` | Rust / Axum 0.7 | Postgres / MySQL (`&mut Transaction`) | SSE & WebSocket | Local, Redis, RabbitMQ, Both | RabbitMQ & Kafka | `/docs` | `8080` |
+| Template | Language / Framework | Database & Transactions | Realtime Engine | Distributed Bridge | Messaging | Rate Limiter | OpenAPI Doc | Port |
+|---|---|---|---|---|---|---|---|---|
+| `template-express` | TypeScript / Express | Postgres / MySQL (`withTransaction`) | SSE & Socket.IO | Redis & RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `5000` |
+| `template-fastapi-async` | Python / FastAPI | Postgres / MySQL (`@transactional`) | SSE & WebSocket | Redis Pub/Sub | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `8000` |
+| `template-golang` | Go / Fiber v2 | Postgres / MySQL (`TransactionManager`) | SSE & WebSocket | Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `8080` |
+| `template-java` | Java 17 / Spring Boot 4 | Postgres / MySQL (`@Transactional`) | SSE & STOMP /ws | Local, Redis, RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/swagger-ui.html` | `8080` |
+| `template-rust` | Rust / Axum 0.7 | Postgres / MySQL (`&mut Transaction`) | SSE & WebSocket | Local, Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `8080` |
 
 ---
 
-## 🛡️ 6 Core Backend Architectural Rules
+## 🛡️ 7 Core Backend Architectural Rules
 
 ### 1. Pure Parameter-Passing Database Transactions
 Hiding database transactions inside `context.Context` (Go) or thread/task-local storage (Rust) is strictly prohibited. Transaction objects must be passed explicitly as function/method parameters:
@@ -84,3 +84,6 @@ Critical mutating endpoints are guarded by Redis-backed idempotency filters with
 
 ### 6. Interactive OpenAPI 3.0 / Swagger UI
 Every backend serves interactive documentation at `/docs` (or `/swagger-ui.html`) and the raw OpenAPI 3.0 schema at `/docs/openapi.json` (or `/v3/api-docs`).
+
+### 7. Dual-Tier Rate Limiting & DoS Protection (RFC 6585)
+All backends implement dual-tier rate limiting (Global API 100 req/60s and Strict Auth 5-10 req/60s) emitting standard `X-RateLimit-*` and `Retry-After` headers, with hybrid Redis distributed storage and resilient in-memory local failover.

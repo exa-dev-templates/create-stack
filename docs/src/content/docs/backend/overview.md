@@ -25,17 +25,17 @@ flowchart LR
 
 ## 📊 Matriks Fitur 5 Backend
 
-| Template | Bahasa / Framework | Database & Transaksi | Realtime Engine | Distributed Bridge | Messaging | OpenAPI Doc | Port |
-|---|---|---|---|---|---|---|---|
-| `template-express` | TypeScript / Express | Postgres / MySQL (`withTransaction`) | SSE & Socket.IO | Redis & RabbitMQ | RabbitMQ & Kafka | `/docs` | `5000` |
-| `template-fastapi-async` | Python / FastAPI | Postgres / MySQL (`@transactional`) | SSE & WebSocket | Redis Pub/Sub | RabbitMQ & Kafka | `/docs` | `8000` |
-| `template-golang` | Go / Fiber v2 | Postgres / MySQL (`TransactionManager`) | SSE & WebSocket | Redis, RabbitMQ, Both | RabbitMQ & Kafka | `/docs` | `8080` |
-| `template-java` | Java 17 / Spring Boot 4 | Postgres / MySQL (`@Transactional`) | SSE & STOMP /ws | Local, Redis, RabbitMQ | RabbitMQ & Kafka | `/swagger-ui.html` | `8080` |
-| `template-rust` | Rust / Axum 0.7 | Postgres / MySQL (`&mut Transaction`) | SSE & WebSocket | Local, Redis, RabbitMQ, Both | RabbitMQ & Kafka | `/docs` | `8080` |
+| Template | Bahasa / Framework | Database & Transaksi | Realtime Engine | Distributed Bridge | Messaging | Rate Limiter | OpenAPI Doc | Port |
+|---|---|---|---|---|---|---|---|---|
+| `template-express` | TypeScript / Express | Postgres / MySQL (`withTransaction`) | SSE & Socket.IO | Redis & RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `5000` |
+| `template-fastapi-async` | Python / FastAPI | Postgres / MySQL (`@transactional`) | SSE & WebSocket | Redis Pub/Sub | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `8000` |
+| `template-golang` | Go / Fiber v2 | Postgres / MySQL (`TransactionManager`) | SSE & WebSocket | Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `8080` |
+| `template-java` | Java 17 / Spring Boot 4 | Postgres / MySQL (`@Transactional`) | SSE & STOMP /ws | Local, Redis, RabbitMQ | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/swagger-ui.html` | `8080` |
+| `template-rust` | Rust / Axum 0.7 | Postgres / MySQL (`&mut Transaction`) | SSE & WebSocket | Local, Redis, RabbitMQ, Both | RabbitMQ & Kafka | Dual-Tier (RFC 6585) | `/docs` | `8080` |
 
 ---
 
-## 🛡️ 6 Pilar Standar Wajib Backend
+## 🛡️ 7 Pilar Standar Wajib Backend
 
 ### 1. Pure Parameter-Passing Database Transactions
 Dilarang menyembunyikan atau menyimpan transaksi database di dalam `context.Context` (Go) atau task-local storage (Rust). Objek transaksi wajib dioper secara eksplisit sebagai argumen method/fungsi:
@@ -84,3 +84,6 @@ Semua operasi mutasi penting diproteksi oleh middleware idempotency berbasis Red
 
 ### 6. Interactive OpenAPI 3.0 / Swagger UI
 Semua backend menyajikan dokumentasi interaktif di `/docs` (atau `/swagger-ui.html`) dan skema raw JSON di `/docs/openapi.json` (atau `/v3/api-docs`).
+
+### 7. Dual-Tier Rate Limiting & DoS Protection (RFC 6585)
+Setiap backend menerapkan proteksi laju request dua tingkat (Global API 100 req/60s dan Strict Auth 5-10 req/60s) dengan header standar `X-RateLimit-*` dan `Retry-After`, serta penyimpanan hybrid Redis dengan auto-fallback ke in-memory lokal.

@@ -280,6 +280,29 @@ public class OrderController {
 
 ---
 
+## 🚦 Dual-Tier Rate Limiting & DoS Protection
+
+`template-java` integrates `RateLimitFilter` as a Spring `@Component` under `com.example.template.java.common.ratelimit`:
+
+### 1. Protection Tiers: Global API vs Strict Auth
+
+1. **Global Rate Limiter**:
+   - Caps general API calls at `rate-limit.max` (default: 100 req / 60 seconds per IP).
+   - Operates as a high-precedence servlet filter (`@Order(Ordered.HIGHEST_PRECEDENCE + 15)`).
+   - Whitelists health probes (`/health`, `/`) and Swagger docs (`/swagger-ui/**`, `/v3/api-docs/**`).
+2. **Strict Auth Limiter**:
+   - Defends authentication routes (`/api/auth/login`, `/api/auth/register`) against credential brute-forcing.
+   - Enforces strict quota `rate-limit.auth-max` (default: 5 req / 60 seconds).
+   - Composite key generator: `rl:auth:{client_ip}:{path}`.
+
+### 2. RFC 6585 Standard Headers & Hybrid Storage
+
+- **RFC 6585 Headers**: Emits `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, and `Retry-After` (on HTTP 429).
+- **Response Format**: Returns HTTP `429 Too Many Requests` envelope `BaseResponse.error("Too many requests...", ApiCode.RATE_LIMIT_EXCEEDED)`.
+- **Hybrid Storage**: Uses atomic `StringRedisTemplate` (`opsForValue().increment()`) when `rate-limit.storage=redis`, falling back to an in-memory `ConcurrentHashMap` with `AtomicLong` counters if Redis is offline.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Validates incoming DTO payloads using standard Jakarta Bean Validation:

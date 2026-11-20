@@ -265,6 +265,29 @@ orders.Post("/", orderHandler.CreateOrder)
 
 ---
 
+## 🚦 Dual-Tier Rate Limiting & DoS Protection
+
+`template-golang` implements dual-tier rate limiting middleware in `pkg/middleware/ratelimit/`:
+
+### 1. Protection Tiers: Global API vs Strict Auth
+
+1. **Global Rate Limiter (`NewGlobalLimiter`)**:
+   - Limits traffic across general API routes with `RATE_LIMIT_MAX` (default: 100 req / 60 seconds per IP).
+   - Mounted at Fiber root level in `internal/app/http.go`: `app.Use(ratelimit.NewGlobalLimiter(cfg.RateLimit, redisClient))`.
+   - Whitelists health probes (`/health`, `/`) and documentation (`/docs`, `/swagger`).
+2. **Strict Auth Limiter (`NewAuthLimiter`)**:
+   - Thwarts brute-force attacks on authentication routes (`/api/v1/auth/login`, `/api/v1/auth/register`).
+   - Enforces strict quota `RATE_LIMIT_AUTH_MAX` (default: 10 req / 60 seconds).
+   - Composite key generator: `c.IP() + ":" + c.Path()`.
+
+### 2. RFC 6585 Standard Headers & Hybrid Storage
+
+- **RFC 6585 Headers**: Emits `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, and `Retry-After` (on HTTP 429).
+- **Response Format**: Returns HTTP `429 Too Many Requests` envelope `response.ErrorResponse(c, fiber.StatusTooManyRequests, constants.MsgRateLimitExceeded, constants.CodeRateLimitExceeded)`.
+- **Hybrid Storage**: Uses `NewRedisFiberStorage(redisClient, ...)` when `RATE_LIMIT_STORAGE=redis`, automatically failing over to Fiber in-memory storage if Redis is unavailable.
+
+---
+
 ## 📋 Request Validation & Boundaries
 
 Endpoint requests use `pkg/validation` to bind and validate three payload formats into a single DTO:

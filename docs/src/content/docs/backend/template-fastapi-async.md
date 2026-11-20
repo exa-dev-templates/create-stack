@@ -288,6 +288,29 @@ async def create_user(data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 ---
 
+## 🚦 Dual-Tier Rate Limiting & Proteksi DoS
+
+`template-fastapi-async` mengintegrasikan `RateLimiterMiddleware` di `middleware/rate_limiter.py`:
+
+### 1. Tingkatan Proteksi: Global API vs Strict Auth
+
+1. **Global Rate Limiter**:
+   - Membatasi request umum dengan kuota `RATE_LIMIT_MAX` (default: 100 req / 60 detik per IP).
+   - Diaktifkan secara global di `app.py`: `app.add_middleware(RateLimiterMiddleware)`.
+   - Mengabaikan (*whitelist*) route `/health`, `/`, `/docs`, `/redoc`, dan `/openapi.json`.
+2. **Strict Auth Limiter**:
+   - Membatasi route autentikasi (`/auth/login`, `/auth/register`) dari serangan *brute force*.
+   - Kuota ketat `RATE_LIMIT_AUTH_MAX` (default: 5 req / 60 detik).
+   - Key generator komposit: `rl:auth:{client_ip}:{path}`.
+
+### 2. Header Standar RFC 6585 & Storage Hybrid
+
+- **Header RFC 6585**: Menyertakan `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, dan `Retry-After` (saat HTTP 429).
+- **Format Response**: Mengembalikan status `429 Too Many Requests` envelope `error_response(message, code=RATE_LIMIT_EXCEEDED)`.
+- **Hybrid Storage**: Menggunakan pipeline atomic Redis (`INCR` + `EXPIRE`) jika `RATE_LIMIT_STORAGE=redis`, dan otomatis *fallback* ke `_memory_store` berbasis `asyncio.Lock` jika Redis tidak tersedia.
+
+---
+
 ## 📋 Validasi Input Request & Boundaries
 
 Validasi Pydantic v2 memastikan request body divalidasi keamanannya sebelum dieksekusi:
