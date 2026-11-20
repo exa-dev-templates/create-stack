@@ -463,6 +463,100 @@ import { Button } from 'primereact/button';
 
 ---
 
+## ⚡ Real-Time Streaming: Hooks `useWebSocket` & `useSSE`
+
+Template React menyediakan custom hooks real-time native di `src/hooks/` yang teroptimasi penuh untuk **React 19** (kompatibel dengan React Compiler) dan **Next.js** (SSR-safe), bebas dari dependensi pihak ketiga (*Zero-Bloat* sesuai Monorepo Rule E):
+
+- **`useWebSocket<TIn, TOut>`**: Full-duplex WebSocket hook dengan auto-reconnect (exponential backoff + jitter), heartbeat ping/pong watchdog, auto JSON parsing, dan unmount cleanup.
+- **`useSSE<T>`**: Server-Sent Events hook reaktif dengan dukungan HTTP-only session cookie (`withCredentials: true`), custom event channels, dan tipe generik yang aman.
+
+### 1. Contoh Penggunaan `useWebSocket`
+
+```tsx title="src/modules/orders/pages/LiveOrdersPage.tsx"
+import React from 'react';
+import { useWebSocket } from '@/hooks';
+
+interface OrderEvent {
+  orderId: string;
+  amount: number;
+  status: 'PENDING' | 'CONFIRMED' | 'DELIVERED';
+}
+
+export const LiveOrdersPage: React.FC = () => {
+  const { status, isConnected, data, send } = useWebSocket<OrderEvent>('ws://localhost:3000/api/v1/orders/ws', {
+    heartbeat: {
+      interval: 30000,
+      pongTimeout: 5000,
+      message: { type: 'ping' },
+    },
+    autoReconnect: {
+      retries: 5,
+      delay: 1000,
+      maxDelay: 30000,
+    },
+    onMessage: (message) => {
+      console.log('Incoming live order:', message);
+    },
+  });
+
+  const sendSubscription = () => {
+    send({ action: 'subscribe', topic: 'orders' });
+  };
+
+  return (
+    <div className="p-4">
+      <div className="flex items-center gap-2 mb-4">
+        <span className={`inline-block w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+        <span>Status: {status}</span>
+      </div>
+      {data && (
+        <div className="border p-4 rounded-lg bg-surface-50 dark:bg-surface-900">
+          <p>Order ID: {data.orderId}</p>
+          <p>Total: ${data.amount}</p>
+          <p>Status: {data.status}</p>
+        </div>
+      )}
+    </div>
+  );
+};
+```
+
+### 2. Contoh Penggunaan `useSSE`
+
+```tsx title="src/modules/notifications/components/LiveNotificationFeed.tsx"
+import React from 'react';
+import { useSSE } from '@/hooks';
+
+interface NotificationPayload {
+  id: string;
+  title: string;
+  timestamp: string;
+}
+
+export const LiveNotificationFeed: React.FC = () => {
+  const { status, isConnected, data } = useSSE<NotificationPayload>('http://localhost:3000/api/v1/notifications/stream', {
+    withCredentials: true,
+    events: ['order_status', 'system_alert'],
+    onMessage: (payload, event) => {
+      console.log(`Received SSE event [${event.type}]:`, payload);
+    },
+  });
+
+  return (
+    <div className="notification-stream">
+      {isConnected ? (
+        <span className="text-xs text-green-600 font-medium">● Streaming Connected</span>
+      ) : (
+        <span className="text-xs text-muted-color">Connecting... ({status})</span>
+      )}
+      {data && <p className="mt-2 text-sm">{data.title}</p>}
+    </div>
+  );
+};
+```
+
+---
+
 ## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```ini title=".env"

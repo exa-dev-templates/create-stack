@@ -479,6 +479,93 @@ const isSubmitting = ref(false);
 
 ---
 
+## ⚡ Real-Time Streaming: Composables `useWebSocket` & `useSSE`
+
+Template Vue menyediakan composables real-time native siap pakai di `src/composables/` tanpa dependensi eksternal (100% *Zero-Bloat* dan *Native-First* sesuai Monorepo Rule E), kompatibel penuh dengan **Vue 3** dan **Nuxt 3/4**:
+
+- **`useWebSocket<TIn, TOut>`**: Full-duplex WebSocket client dengan auto-reconnect (exponential backoff + jitter), heartbeat keep-alive ping/pong, auto JSON parser, dan lifecycle cleanup otomatis.
+- **`useSSE<T>`**: Server-Sent Events (SSE) client reaktif dengan HTTP-only cookie support (`withCredentials: true`), dynamic event listeners, SSR-safe guard, dan type-safe payload.
+
+### 1. Contoh Penggunaan `useWebSocket`
+
+```vue title="src/modules/orders/pages/LiveOrdersPage.vue"
+<script setup lang="ts">
+import { useWebSocket } from '@/composables';
+
+interface OrderEvent {
+  orderId: string;
+  amount: number;
+  status: 'PENDING' | 'CONFIRMED' | 'DELIVERED';
+}
+
+const { status, isConnected, data, send, close } = useWebSocket<OrderEvent>('ws://localhost:3000/api/v1/orders/ws', {
+  heartbeat: {
+    interval: 30000,
+    pongTimeout: 5000,
+    message: { type: 'ping' },
+  },
+  autoReconnect: {
+    retries: 5,
+    delay: 1000,
+    maxDelay: 30000,
+  },
+  onMessage: (message) => {
+    console.log('Incoming live order:', message);
+  },
+});
+
+const sendSubscription = () => {
+  send({ action: 'subscribe', topic: 'orders' });
+};
+</script>
+
+<template>
+  <div class="p-4">
+    <div class="flex items-center gap-2 mb-4">
+      <span class="inline-block w-3 h-3 rounded-full" :class="isConnected ? 'bg-green-500' : 'bg-red-500'" />
+      <span>Status: {{ status }}</span>
+    </div>
+    <div v-if="data" class="border p-4 rounded-lg bg-surface-50 dark:bg-surface-900">
+      <p>Order ID: {{ data.orderId }}</p>
+      <p>Total: ${{ data.amount }}</p>
+      <p>Status: {{ data.status }}</p>
+    </div>
+  </div>
+</template>
+```
+
+### 2. Contoh Penggunaan `useSSE`
+
+```vue title="src/modules/notifications/components/LiveNotificationFeed.vue"
+<script setup lang="ts">
+import { useSSE } from '@/composables';
+
+interface NotificationPayload {
+  id: string;
+  title: string;
+  timestamp: string;
+}
+
+const { status, isConnected, data } = useSSE<NotificationPayload>('http://localhost:3000/api/v1/notifications/stream', {
+  withCredentials: true, // Otomatis menyertakan HTTP-only session cookie
+  events: ['order_status', 'system_alert'],
+  onMessage: (payload, event) => {
+    console.log(`Received SSE event [${event.type}]:`, payload);
+  },
+});
+</script>
+
+<template>
+  <div class="notification-stream">
+    <span v-if="isConnected" class="text-xs text-green-600 font-medium">● Streaming Connected</span>
+    <span v-else class="text-xs text-muted-color">Connecting... ({{ status }})</span>
+    <p v-if="data" class="mt-2 text-sm">{{ data.title }}</p>
+  </div>
+</template>
+```
+
+---
+
 ## ⚙️ Variabel Lingkungan & Konfigurasi
 
 ```ini title=".env"
