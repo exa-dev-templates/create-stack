@@ -7,6 +7,25 @@ Both frontend templates (`template-react` and `template-vue`) are built upon a c
 
 ---
 
+## 📊 Feature & Parity Matrix
+
+| Architecture Dimension | React 19 (`template-react`) | Vue 3 (`template-vue`) |
+| :--- | :--- | :--- |
+| **Framework & Version** | React 19 + TypeScript (Strict) | Vue 3 (`<script setup lang="ts">`) |
+| **Build Tooling** | Vite 6 + `@vitejs/plugin-react` | Vite 6 + `@vitejs/plugin-vue` |
+| **CSS Engine** | Tailwind CSS v4 (`@tailwindcss/vite`) | Tailwind CSS v4 (`@tailwindcss/vite`) |
+| **UI Components** | PrimeReact (Aura Theme Preset) | PrimeVue (Aura Theme Preset) |
+| **State Management** | Zustand 5 | Pinia 3 (Setup Stores Pattern) |
+| **Routing** | React Router v7 (`createBrowserRouter`) | Vue Router 4 (`createRouter`) |
+| **Enterprise HTTP Client** | Axios + Bearer Cookie Auto-Injection | Axios + Bearer Cookie Auto-Injection |
+| **Token Refresh Queue** | Concurrency-safe 401 buffer (`failedQueue`) | Concurrency-safe 401 buffer (`failedQueue`) |
+| **Idempotency Protection** | Native Web Crypto UUID v4 + `useIdempotencyKey` | Native Web Crypto UUID v4 + `useIdempotencyKey` |
+| **Full-Duplex WebSocket** | `useWebSocket` (Heartbeat watchdog + Reconnect Jitter) | `useWebSocket` (Heartbeat watchdog + Reconnect Jitter) |
+| **Server-Sent Events (SSE)** | `useSSE` (`withCredentials: true` + Custom Events) | `useSSE` (`withCredentials: true` + Custom Events) |
+| **Loading Policy** | Mandatory Skeleton Loader (Zero Spinner Policy) | Mandatory Skeleton Loader (Zero Spinner Policy) |
+
+---
+
 ## 📂 Modular & Feature-Driven Architecture
 
 Client code is partitioned into domain-specific modules (*feature modules*) to ensure seamless scalability as codebases grow:
@@ -17,6 +36,8 @@ src/
 ├── assets/          # Static assets (images, fonts, global CSS)
 ├── components/      # Global & reusable UI components (ErrorBoundary, ToastProvider)
 │   └── layout/      # Sidebar, Header, Breadcrumbs
+├── hooks/           # (React) Custom hooks (useWebSocket, useSSE, useIdempotencyKey, useDarkMode)
+├── composables/     # (Vue) Composables (useWebSocket, useSSE, useIdempotencyKey, useDarkMode)
 ├── layouts/         # Layout shells (DashboardLayout, AuthLayout)
 ├── modules/         # Encapsulated feature modules per business domain
 │   ├── auth/        # Login, Register, auth store, types, API
@@ -45,6 +66,23 @@ All REST API operations flow through the centralized Axios client (`src/api/clie
 - **Concurrent Request Queuing on 401**: When access tokens expire, incoming requests are buffered into `failedQueue` while the refresh token executes against `/auth/refresh`. Once rotated, buffered requests are replayed transparently.
 - **Global Toast Event Bridge**: Network anomalies or 4xx/5xx HTTP responses automatically broadcast an `api:toast` window event, suppressible per request via `{ skipToast: true }`.
 - **Idempotency Protection & Resilient Mutation Lifecycle (`useIdempotencyKey`)**: Automatically injects standard `Idempotency-Key` and `X-Idempotency-Key` headers via `{ idempotencyKey: true | string }`. The `useIdempotencyKey` lifecycle hook/composable secures mutations against F5 browser reloads via `sessionStorage`, retains the key during timeouts and retries, and automatically cycles to a fresh key upon 2xx success.
+
+---
+
+## ⚡ Real-Time Streaming: WebSocket & Server-Sent Events (SSE)
+
+Both frontend templates provide production-grade, *Native-First & Zero-Bloat* real-time utilities (zero third-party dependencies like `socket.io-client` or `event-source-polyfill` per Monorepo Rule E), designed for seamless integration with the backend distributed real-time engine (`REALTIME_BRIDGE=redis|rabbitmq|both|local`):
+
+- **Full-Duplex WebSocket (`useWebSocket`)**:
+  - Auto-reconnect with exponential backoff and random jitter to guard backend clusters against thundering herds.
+  - Built-in ping/pong heartbeat watchdog keep-alive to actively detect and purge half-open sockets.
+  - Automatic JSON serialization on dispatch (`send(...)`) and deserialization on reception (`onMessage`).
+  - Automatic unmount lifecycle cleanup ensuring sockets close safely during route transitions.
+- **Server-Sent Events (`useSSE`)**:
+  - Reactive unidirectional data streaming with automated JSON payload parsing.
+  - Cross-origin HTTP-only session cookie forwarding via `{ withCredentials: true }`.
+  - Multi-channel event listeners via array configuration: `events: ['order_status', 'system_alert']`.
+  - Fully SSR-safe execution preventing hydration mismatches in hybrid SSR environments (Next.js / Nuxt 3/4).
 
 ---
 
